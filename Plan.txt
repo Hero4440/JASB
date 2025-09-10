@@ -1,0 +1,667 @@
+
+Vision
+
+JASB is a next-gen expense splitting app — a modern alternative to Splitwise — built with LLM assistance and human-in-the-loop safety. It solves the universal pain of managing shared expenses (roommates, trips, groups) with a fast, reliable, and transparent workflow. Unlike incumbents, JASB emphasizes clarity, privacy, and automation while keeping users in control.
+
+⸻
+
+Core Problem
+	•	Existing apps like Splitwise are cumbersome and often hide features behind paywalls.
+	•	Users struggle with data reliability, confusing balances, and manual entry overhead.
+	•	LLMs can help, but hallucinations make them unsafe if left unchecked.
+
+JASB’s differentiation:
+	•	LLMs propose splits → user reviews, edits, approves (no blind writes).
+	•	Draft stack ensures accuracy and trust.
+	•	Lightweight design: faster, clearer, more reliable.
+
+⸻
+
+Target Users
+	•	Students/Roommates: recurring rent, groceries, utilities.
+	•	Travelers/Friends: trips with multi-currency receipts.
+	•	Freelancers/Small Teams: project expenses, export to invoices.
+	•	Emerging Markets: offline-first + UPI/PIX/PayPal deep links.
+
+⸻
+
+Key Features (MVP + Premium)
+
+🟢 MVP (free, launchable by Sep 30)
+	•	Sign in (Supabase/Clerk auth).
+	•	Create/join groups; invite members.
+	•	Add expenses (equal split, payer, notes).
+	•	Balances & “Settle Up” (minimal transfer suggestion).
+	•	LLM Drafts: describe an expense in natural language → draft appears in review stack → user approves or rejects.
+	•	Push notifications (invite, expense added, settle reminder).
+	•	Paywall foundation (RevenueCat).
+
+🟡 Premium (monetization hooks)
+	•	OCR receipts → auto itemized draft.
+	•	Advanced splits (shares, percentages, amounts).
+	•	Analytics dashboard (categories, top spenders, trends).
+	•	Export (CSV/PDF).
+	•	Multi-currency group mode.
+	•	AI Explain/Recap: “You owe $37.20, mostly from groceries.”
+
+🔵 Future Stretch
+	•	Recurring expenses (rent, utilities).
+	•	Trip mode (multi-currency daily summaries).
+	•	Offline-first sync.
+	•	Freelancer invoice export.
+
+⸻
+
+Architecture at a Glance
+	•	Mobile App: React Native + TS, React Query, OneSignal SDK, RevenueCat SDK.
+	•	Backend API: Node/TS (Fastify), Postgres (Supabase), S3 storage, OneSignal integration.
+	•	MCP Server: TypeScript, exposes safe LLM tools (parse expense, explain balance, suggest settlements).
+	•	Database: Postgres with RLS enforcing group scoping.
+	•	Third-Party Services:
+	•	Auth: Supabase/Clerk
+	•	Payments: RevenueCat
+	•	Push: OneSignal
+
+⸻
+
+Why JASB Wins (Shipaton Categories)
+	•	HAMM Award: robust monetization (subscription + export IAPs).
+	•	Build & Grow: ship early, iterate with DAU/trial metrics.
+	•	OneSignal Boost: creative nudges (“Your trip group has 3 unsettled expenses, tap to settle”).
+	•	Design Award: minimalist, reliable UI vs cluttered incumbents.
+	•	Peace Prize: transparency for families, NGOs, and community groups.
+
+⸻
+
+Milestones (4-week hackathon plan)
+	1.	Week 1: DB schema + Backend (groups/expenses/balances).
+	2.	Week 2: RN skeleton + Add Expense (form) + Settle Up.
+	3.	Week 3: MCP Draft flow + OneSignal integration + Paywall.
+	4.	Week 4: Analytics/export + polish + app store submission.
+
+⸻
+
+Success Criteria
+	•	App live on iOS + Android by Sep 30, 2025.
+	•	Free users can split expenses safely.
+	•	Premium users unlock OCR receipts + analytics.
+	•	Demonstrated growth metrics: DAU, trial → paid conversions.
+	•	Qualify for multiple Shipaton award categories.
+
+⸻
+
+JASB = Splitwise + AI assistance (safe draft review) + premium reliability features → a monetizable, award-ready Shipaton project.
+
+-----
+# JASB Build Plan - Adapted for Your Expo/RN Boilerplate
+
+**Updated for**: React Native + Expo + TypeScript + NativeWind + Detox + Jest setup
+
+Your existing stack looks great! Here's how we'll adapt the JASB architecture to your current boilerplate structure:
+
+## Current Stack Analysis
+- ✅ **Frontend**: React Native + Expo + TypeScript + NativeWind + Expo Router
+- ✅ **Testing**: Jest + React Testing Library + Detox E2E
+- ✅ **Linting**: ESLint + Prettier + Husky + lint-staged
+- ✅ **Build Tools**: Metro + Babel with module resolver (`@/` imports)
+
+## Additions Needed for JASB
+- **Backend**: Node/TypeScript (Fastify) - new `backend/` directory
+- **MCP Server**: TypeScript MCP server - new `mcp-server/` directory  
+- **Database**: Postgres (Supabase) + migrations in `sql/`
+- **New Dependencies**: React Query, Supabase, RevenueCat, OneSignal
+
+---
+
+## A) Project Structure Updates
+
+```
+your-project/
+├── app/                    # (existing) Expo Router screens
+├── src/                    # (existing) React Native components/templates
+├── e2e/                    # (existing) Detox tests
+├── backend/               # (NEW) Fastify API server
+│   ├── src/
+│   │   ├── routes/
+│   │   ├── lib/
+│   │   └── __tests__/
+│   ├── package.json
+│   └── tsconfig.json
+├── mcp-server/            # (NEW) MCP tools for LLM
+│   ├── src/
+│   │   └── tools/
+│   ├── package.json
+│   └── tsconfig.json
+├── sql/                   # (NEW) Database migrations
+│   ├── 001_core.sql
+│   └── 002_policies.sql
+└── shared/                # (NEW) Shared types between frontend/backend
+    └── types/
+```
+
+---
+
+## B) Data Layer (Postgres + RLS)
+
+### B1. Database Schema & Supabase Setup
+
+**Purpose**: Core tables with Row Level Security for multi-tenant safety.
+
+**Claude Code prompt**:
+
+```
+You are Claude Code. Set up the database layer for JASB expense splitting app:
+
+1. Create sql/001_core.sql with these exact tables:
+   - users (id uuid primary key, email text, name text, avatar_url text, created_at timestamp)
+   - groups (id uuid primary key, name text, currency_code text default 'USD', created_by uuid references users, created_at timestamp)
+   - group_members (group_id uuid references groups, user_id uuid references users, role text default 'member', joined_at timestamp, primary key(group_id, user_id))
+   - expenses (id uuid primary key, group_id uuid references groups, title text, amount_cents integer, currency_code text, paid_by uuid references users, receipt_url text, description text, created_at timestamp, updated_at timestamp)
+   - expense_splits (id uuid primary key, expense_id uuid references expenses, user_id uuid references users, amount_cents integer, split_type text, created_at timestamp)
+   - settlements (id uuid primary key, group_id uuid references groups, from_user uuid references users, to_user uuid references users, amount_cents integer, status text default 'pending', created_at timestamp, updated_at timestamp)
+   - expense_drafts (id uuid primary key, group_id uuid references groups, created_by uuid references users, title text, amount_cents integer, paid_by uuid references users, participants jsonb, split_type text, status text default 'pending_review', source text, llm_metadata jsonb, created_at timestamp, updated_at timestamp)
+   - ai_events (id uuid primary key, user_id uuid, event_type text, tool_name text, input_data jsonb, output_data jsonb, created_at timestamp)
+   - idempotency (key text primary key, user_id uuid references users, response_data jsonb, created_at timestamp)
+
+2. Add useful indexes and updated_at triggers.
+
+3. Create sql/002_policies.sql with RLS policies:
+   - Users can only see groups they're members of
+   - All group data scoped by group membership
+   - Users can manage their own drafts, any group member can approve/reject
+
+4. Create sql/down.sql for rollback (DROP tables in reverse order with CASCADE)
+
+Include helpful comments explaining the schema decisions.
+```
+
+---
+
+## C) Backend API (Fastify + Node/TS)
+
+### C1. Backend Project Setup
+
+**Purpose**: Typed REST API with Supabase auth integration.
+
+**Claude Code prompt**:
+
+```
+You are Claude Code. Create a backend/ directory with Fastify TypeScript server for JASB:
+
+1. backend/package.json with dependencies:
+   - fastify, @fastify/cors, @fastify/helmet
+   - pg, @types/pg (Postgres client)  
+   - zod (validation)
+   - pino (logging)
+   - @supabase/supabase-js (auth)
+   - jest, @types/jest (testing)
+
+2. backend/src/index.ts - Fastify server with:
+   - CORS, helmet, pino logging
+   - Health check GET /healthz
+   - Error handler returning {code, message, details?}
+   - Boot on port from env
+
+3. backend/src/auth.ts - Supabase JWT verification:
+   - verifyToken() middleware that sets req.user = {id, email}
+   - Handle 401 for invalid/missing tokens
+
+4. backend/src/db.ts - Postgres connection:
+   - pg Pool setup from env vars
+   - Export query helper with types
+
+5. backend/src/validation.ts - Zod helpers:
+   - Common schemas (UUID, positive integers, currency codes)
+   - Error formatter for zod validation failures
+
+6. backend/tsconfig.json extending your main tsconfig but with node settings
+
+7. backend/src/__tests__/smoke.test.ts - basic health check test
+
+Make it follow your existing project's TypeScript/ESLint conventions.
+```
+
+### C2. Core API Routes
+
+**Purpose**: Groups, expenses, balances, settlements, drafts.
+
+**Claude Code prompt**:
+
+```
+You are Claude Code. Implement the core JASB API routes in backend/src/routes/:
+
+1. backend/src/routes/groups.ts:
+   - GET /v1/groups (user's groups)
+   - POST /v1/groups {name, currency_code?}
+   - GET /v1/groups/:id (with member details)  
+   - POST /v1/groups/:id/invite {email} (stub for now)
+
+2. backend/src/routes/expenses.ts:
+   - POST /v1/groups/:id/expenses (with Idempotency-Key header)
+   - GET /v1/groups/:id/expenses?limit&cursor
+   - GET /v1/expenses/:id
+   - DELETE /v1/expenses/:id
+
+3. backend/src/routes/settlements.ts:
+   - GET /v1/groups/:id/balances → [{user_id, net_cents}]
+   - POST /v1/groups/:id/settlements/suggest → minimal transfers
+   - POST /v1/groups/:id/settlements (create)
+   - PATCH /v1/settlements/:id {status}
+
+4. backend/src/routes/drafts.ts:
+   - POST /v1/groups/:id/drafts (create draft)
+   - GET /v1/groups/:id/drafts?status=pending_review
+   - PATCH /v1/drafts/:id (edit)
+   - POST /v1/drafts/:id/approve (creates real expense)
+   - POST /v1/drafts/:id/reject {reason?}
+
+5. backend/src/lib/splitMath.ts - utilities for split validation and settlement suggestions
+
+Include zod validation, auth middleware on all routes, and proper error handling. Add Jest tests for critical paths.
+```
+
+---
+
+## D) React Native App Updates
+
+### D1. Dependencies & Setup
+
+**Purpose**: Add React Query, Supabase, RevenueCat, OneSignal to your existing setup.
+
+**Claude Code prompt**:
+
+```
+You are Claude Code. Update the existing React Native app for JASB:
+
+1. Add to package.json dependencies:
+   - @tanstack/react-query
+   - @supabase/supabase-js  
+   - react-native-purchases (RevenueCat)
+   - react-native-onesignal
+   - @expo/vector-icons
+   - expo-image-picker (for receipt uploads)
+
+2. Update app.json expo config:
+   - Add scheme for deep linking: "jasb"
+   - Add iOS/Android bundle identifiers for JASB
+   - Add OneSignal plugin
+
+3. Create src/lib/supabase.ts - Supabase client setup
+
+4. Create src/lib/api.ts - React Query setup with typed hooks:
+   - useGroups(), useCreateGroup()  
+   - useExpenses(groupId), useCreateExpense()
+   - useBalances(groupId), useDrafts(groupId)
+   - Error handling with toast notifications
+
+5. Update app/_layout.tsx to include:
+   - React Query provider
+   - Supabase auth provider
+   - OneSignal initialization
+
+6. Create src/types/api.ts - TypeScript interfaces matching your backend schemas
+
+Keep your existing NativeWind styling approach and Expo Router structure.
+```
+
+### D2. Core Screens Implementation
+
+**Purpose**: Replace the Welcome screen with JASB's main screens.
+
+**Claude Code prompt**:
+
+```
+You are Claude Code. Create JASB screens using your existing NativeWind + Expo Router setup:
+
+1. Replace app/index.tsx with:
+   - GroupList screen showing user's expense groups
+   - "Create Group" FAB with modal
+   - Pull-to-refresh and loading states
+
+2. Create app/groups/[id].tsx (GroupHome):
+   - Group balance summary with member cards
+   - Recent expenses list
+   - FAB for "Add Expense"
+   - Tab bar: "Expenses" | "Drafts" | "Settle"
+
+3. Create app/groups/[id]/add-expense.tsx:
+   - Two tabs: "Quick Split" (form) | "Describe" (natural language)
+   - Form: title, amount, date picker, payer selector, equal split
+   - NL tab: text input → calls MCP → navigates to draft review
+
+4. Create app/groups/[id]/drafts/[draftId].tsx (Draft Review):
+   - Editable draft with validation warnings
+   - Split type selector (equal/percent/amounts)
+   - "Approve & Create" | "Save Draft" | "Reject" buttons
+
+5. Create app/groups/[id]/expenses/[expenseId].tsx:
+   - Expense details with split breakdown
+   - Receipt photo with upload capability
+   - Edit/delete options for creator
+
+Use your existing src/templates/ pattern for reusable components. Include proper TypeScript types and error boundaries. Style with NativeWind classes following your current approach.
+```
+
+### D3. Human-in-the-Loop Draft System
+
+**Purpose**: Core safety feature - all LLM outputs become reviewable drafts.
+
+**Claude Code prompt**:
+
+```
+You are Claude Code. Implement the draft review system for JASB:
+
+1. Create src/components/DraftCard.tsx:
+   - Shows draft with warning badges for validation issues
+   - Preview of parsed expense data
+   - "Review" button leading to draft detail
+
+2. Create src/components/DraftReview.tsx:
+   - Fully editable expense form pre-filled from LLM output
+   - Real-time validation with backend error display
+   - Split type switching (equal/percent/amounts/shares)
+   - Participant management with autocomplete
+
+3. Create src/components/ExpenseSplitEditor.tsx:
+   - Dynamic UI based on split_type
+   - Live math validation (sums must equal total)
+   - Participant role indicators (payer, beneficiaries)
+
+4. Update your existing API hooks to include:
+   - useDrafts(groupId, status?) 
+   - useApproveDraft(draftId)
+   - useRejectDraft(draftId) 
+   - useUpdateDraft(draftId)
+
+5. Add draft-specific navigation in app/groups/[id]/drafts/index.tsx:
+   - Tabs: "Pending" (needs review) | "Mine" (my drafts) | "All"
+   - Batch actions for multiple drafts
+
+Include proper loading states, optimistic updates, and error handling. Make the review process feel fast and trustworthy.
+```
+
+---
+
+## E) MCP Server for LLM Safety
+
+### E1. MCP Server Setup
+
+**Purpose**: Safe LLM tools that never directly write to database.
+
+**Claude Code prompt**:
+
+```
+You are Claude Code. Create a TypeScript MCP server for JASB LLM tools:
+
+1. mcp-server/package.json with dependencies:
+   - @anthropic-ai/sdk or openai (LLM client)
+   - @modelcontextprotocol/server (MCP runtime)
+   - zod (validation)
+   - node-fetch (HTTP client to backend)
+
+2. mcp-server/src/index.ts - MCP server setup:
+   - Register tools: parse_natural_expense, explain_balance, suggest_settlements
+   - Service authentication to backend via API key
+   - Logging all tool calls to ai_events table via backend
+
+3. mcp-server/src/backend.ts - HTTP client:
+   - Authenticated requests to backend API  
+   - Wrapper functions for creating drafts, fetching balances
+
+4. mcp-server/src/tools/parse-expense.ts:
+   - Tool that takes {user_id, group_id, utterance, default_currency}
+   - Uses LLM to extract: title, amount, date, payer name, participants
+   - Calls backend POST /groups/:id/drafts with extracted data
+   - Returns {draft_id, validation_warnings[]}
+
+5. mcp-server/src/tools/explain-balance.ts:
+   - Fetches user's balance + recent expenses from backend
+   - LLM generates friendly explanation: "You owe $23.45, mostly from last week's groceries"
+   - Returns narrative without exposing raw financial data
+
+Include proper error handling and never let LLM write directly to database - all writes go through backend validation.
+```
+
+---
+
+## F) Monetization & Notifications
+
+### F1. RevenueCat Integration
+
+**Purpose**: Paywall for premium features (OCR, advanced splits, exports).
+
+**Claude Code prompt**:
+
+```
+You are Claude Code. Add RevenueCat monetization to the JASB app:
+
+1. Create src/lib/purchases.ts:
+   - Configure react-native-purchases with your RevenueCat API key
+   - Export useEntitlements() hook returning {hasOCR, hasAdvanced, hasExport}
+   - Purchase flow functions
+
+2. Create src/components/PaywallModal.tsx:
+   - Attractive pricing display (monthly/annual options)
+   - Feature comparison: Free vs Premium
+   - Purchase buttons with loading states
+   - Uses NativeWind for styling
+
+3. Gate premium features in existing screens:
+   - OCR receipt scanning in ExpenseDetail
+   - Advanced split types (percent/amounts) in AddExpense
+   - CSV export in GroupHome
+   - LLM explain feature in BalanceSummary
+
+4. Add src/hooks/usePaywall.ts:
+   - Custom hook that shows paywall modal when non-entitled user touches premium feature
+   - Tracks paywall views for analytics
+
+Integration should feel seamless - show what premium unlocks without being pushy.
+```
+
+### F2. OneSignal Push Notifications
+
+**Purpose**: Engagement and user retention through smart notifications.
+
+**Claude Code prompt**:
+
+```
+You are Claude Code. Add OneSignal push notifications to JASB:
+
+1. Update backend/src/notify.ts:
+   - OneSignal REST API client
+   - Functions: sendExpenseAdded(), sendSettlementRequest(), sendDraftReview()
+   - Include deep link data: {type: 'expense'|'draft'|'settlement', groupId, itemId}
+
+2. Update React Native app with OneSignal:
+   - Configure OneSignal in app/_layout.tsx
+   - Set external user ID on auth
+   - Handle notification open → navigate to correct screen
+   - Permission requests at appropriate times
+
+3. Smart notification triggers in backend:
+   - New expense → notify group members (except creator)
+   - Draft created → notify group members who can approve
+   - Settlement requested → notify specific user
+   - Gentle nudges for unsettled balances (weekly digest)
+
+4. Add notification preferences:
+   - User settings screen for notification types
+   - Backend respects user preferences before sending
+
+Focus on helpful, non-spammy notifications that add value to the expense splitting workflow.
+```
+
+---
+
+## G) Testing Strategy Updates
+
+### G1. Backend Testing
+
+**Purpose**: Unit and integration tests for critical business logic.
+
+**Claude Code prompt**:
+
+```
+You are Claude Code. Add comprehensive testing to the JASB backend:
+
+1. backend/src/__tests__/splitMath.test.ts:
+   - Test split calculations for all types (equal/percent/amounts)
+   - Rounding edge cases and cent distribution
+   - Settlement algorithm correctness
+
+2. backend/src/__tests__/api.test.ts:
+   - Integration tests using test database
+   - Draft approval workflow end-to-end
+   - Idempotency key behavior
+   - RLS policy enforcement
+
+3. backend/src/__tests__/auth.test.ts:
+   - JWT verification with valid/invalid tokens
+   - Group membership authorization
+   - Error response formats
+
+4. Add test database setup:
+   - Separate test Supabase project or local postgres
+   - Migrations run before tests
+   - Data cleanup between tests
+
+Include both happy path and error cases. Test the human-in-the-loop draft system thoroughly.
+```
+
+### G2. E2E Testing with Detox
+
+**Purpose**: Update existing Detox tests for JASB user flows.
+
+**Claude Code prompt**:
+
+```
+You are Claude Code. Update the Detox E2E tests for JASB workflows:
+
+1. Update e2e/tests/Main.e2e.ts:
+   - Replace welcome screen test with login → group list flow
+   - Test group creation and member invitation
+
+2. Add e2e/tests/ExpenseSplitting.e2e.ts:
+   - Create group → add expense (form path) → verify balance updates
+   - Natural language expense → review draft → approve → verify expense created
+   - Settlement suggestion → mark as paid → verify balance cleared
+
+3. Add e2e/tests/Paywall.e2e.ts:  
+   - Attempt premium feature without subscription → paywall appears
+   - Mock purchase flow → premium feature unlocks
+
+4. Add test data helpers:
+   - Mock Supabase auth for consistent test users
+   - Database seeding for repeatable test scenarios
+
+Keep tests focused on critical user journeys. Use your existing Detox setup but update for JASB screens and flows.
+```
+
+---
+
+## H) Development Workflow
+
+### H1. Environment Setup
+
+**Purpose**: Developer experience with proper environment management.
+
+**Claude Code prompt**:
+
+```
+You are Claude Code. Set up development environment for JASB:
+
+1. Create .env.example files for each part:
+   - Root .env.example (shared config)
+   - backend/.env.example (database, Supabase, OneSignal)
+   - mcp-server/.env.example (LLM API keys, backend URL)
+
+2. Update your existing scripts in package.json:
+   - "dev:backend": start Fastify in watch mode
+   - "dev:mcp": start MCP server  
+   - "dev:full": concurrently run RN + backend + MCP
+   - "db:migrate": run SQL migrations on Supabase
+
+3. Add docker-compose.yml for local development:
+   - Local postgres for backend development
+   - Redis for session storage (optional)
+
+4. Update .gitignore:
+   - Add backend/dist/, mcp-server/dist/
+   - Add .env files for all directories
+
+5. Update README.md:
+   - JASB project description
+   - Setup instructions for all three components
+   - Environment variable documentation
+
+Make it easy for new developers to get the full stack running locally.
+```
+
+---
+
+## I) Deployment & CI/CD
+
+### I1. GitHub Actions Updates
+
+**Purpose**: Automated testing and deployment pipeline.
+
+**Claude Code prompt**:
+
+```
+You are Claude Code. Update the CI/CD pipeline for JASB's multi-component architecture:
+
+1. Update .github/workflows/ci.yml:
+   - Add jobs for backend and mcp-server testing
+   - Run migrations on test database
+   - Type checking across all TypeScript projects
+   - Your existing RN linting and testing
+
+2. Add .github/workflows/deploy.yml:
+   - Backend deployment to Render/Railway/Fly.io
+   - MCP server deployment (if separate)
+   - Database migration on production
+   - Mobile app build with EAS (separate workflow)
+
+3. Add environment management:
+   - GitHub secrets for all API keys
+   - Staging vs production environment handling
+   - Database connection security
+
+4. Add deployment health checks:
+   - Backend API health endpoint verification
+   - Database connectivity tests
+   - MCP server tool registration verification
+
+Build on your existing CI setup but extend for the full stack nature of JASB.
+```
+
+---
+
+## Summary
+
+This adapted plan leverages your excellent React Native + Expo boilerplate while adding the backend and MCP components needed for JASB. Key changes from the original plan:
+
+**Kept from your boilerplate:**
+- Expo Router file-based routing
+- NativeWind styling approach  
+- TypeScript configuration with `@/` imports
+- Jest + Detox testing setup
+- ESLint + Prettier code quality
+- Your existing project structure
+
+**Added for JASB:**
+- Separate `backend/` and `mcp-server/` directories
+- Supabase integration for auth and database
+- React Query for API state management
+- Human-in-the-loop draft system (core safety feature)
+- RevenueCat and OneSignal integrations
+- Comprehensive testing for business logic
+
+The 4-week timeline becomes:
+- **Week 1**: Database + Backend API (B1-B2)
+- **Week 2**: React Native screens + API integration (D1-D2) 
+- **Week 3**: MCP server + Draft system + Monetization (E1, D3, F1)
+- **Week 4**: Notifications + Testing + Polish (F2, G1-G2, deployment)
+
+Ready to dive into any specific component! Which work package would you like me to generate first?
