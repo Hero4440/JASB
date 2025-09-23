@@ -104,7 +104,7 @@ function CreateGroupButton() {
 
 // Main Groups List Screen
 const GroupsListScreen = () => {
-  const { user, isLoading: authLoading, signOut } = useAuth();
+  const { user, isLoading: authLoading, signOut, refreshAuth } = useAuth();
   const { data: groups, isLoading, error, refetch } = useGroups();
 
   // Show loading state
@@ -153,7 +153,8 @@ const GroupsListScreen = () => {
                   'dev_user',
                   JSON.stringify(mockUser),
                 );
-                router.replace('/');
+                // Refresh auth state to pick up the dev user
+                await refreshAuth();
               }}
             >
               <Text className="font-semibold text-white">Quick Dev Login</Text>

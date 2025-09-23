@@ -10,14 +10,20 @@
     "start": "node dist/mcp-server/src/index.js",
     "test": "jest --passWithNoTests",
     "lint": "eslint src --ext .ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^0.4.0",
     "@anthropic-ai/sdk": "^0.27.0",
     "zod": "^3.22.4",
     "node-fetch": "^3.3.2",
-    "pino": "^8.16.2"
+    "pino": "^8.16.2",
+    "expo-dev-client": "~2.4.13",
+    "expo": "~54.0.7",
+    "react": "19.1.0",
+    "react-native": "0.81.4"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",

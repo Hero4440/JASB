@@ -3,15 +3,20 @@ import type {
   CreateDraftRequest,
   CreateExpenseRequest,
   CreateGroupRequest,
+  CreateSettlementRequest,
   Expense,
   ExpenseDraft,
   Group,
+  Settlement,
+  SettlementRecord,
   UpdateDraftRequest,
+  UpdateExpenseRequest,
   User,
 } from '@shared/types';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { getAuthToken } from './supabase';
+import { logger, LogCategory } from './logger';
 
 // API configuration
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3001';
@@ -57,27 +62,100 @@ class ApiClient {
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
     const headers = await this.getHeaders();
+    const method = options.method || 'GET';
+    const startTime = Date.now();
 
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        ...headers,
-        ...options.headers,
-      },
+    // Log the outgoing request
+    const requestId = logger.networkRequest({
+      url,
+      method,
+      headers: Object.fromEntries(
+        Object.entries(headers).filter(([key]) =>
+          !key.toLowerCase().includes('authorization') // Don't log auth tokens
+        )
+      ),
+      body: options.body ? JSON.parse(options.body as string) : undefined,
     });
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      const error = new Error(
-        errorData.message || `HTTP ${response.status}: ${response.statusText}`,
-      );
-      (error as any).status = response.status;
-      (error as any).code = errorData.code;
-      (error as any).details = errorData.details;
+    try {
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          ...headers,
+          ...options.headers,
+        },
+      });
+
+      const duration = Date.now() - startTime;
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const error = new Error(
+          errorData.message || `HTTP ${response.status}: ${response.statusText}`,
+        );
+        (error as any).status = response.status;
+        (error as any).code = errorData.code;
+        (error as any).details = errorData.details;
+
+        // Log the error response
+        logger.networkResponse(requestId, {
+          response: {
+            status: response.status,
+            statusText: response.statusText,
+            data: errorData,
+          },
+          duration,
+          error: error.message,
+        });
+
+        throw error;
+      }
+
+      // Handle 204 No Content responses (common for DELETE requests)
+      let responseData;
+      if (response.status === 204) {
+        responseData = null; // No content to parse
+      } else {
+        responseData = await response.json();
+      }
+
+      // Log successful response
+      logger.networkResponse(requestId, {
+        response: {
+          status: response.status,
+          statusText: response.statusText,
+          data: responseData,
+        },
+        duration,
+      });
+
+      return responseData;
+    } catch (error) {
+      const duration = Date.now() - startTime;
+
+      // Log network errors (connection failed, timeout, etc.)
+      logger.networkResponse(requestId, {
+        duration,
+        error: error instanceof Error ? error.message : 'Unknown network error',
+      });
+
+      // Log additional context for network failures
+      if (error instanceof TypeError && error.message === 'Network request failed') {
+        logger.error(
+          LogCategory.NETWORK,
+          `Network connection failed to ${url}. Backend server may not be running.`,
+          error as Error,
+          {
+            baseUrl: this.baseUrl,
+            endpoint,
+            method,
+            suggestion: 'Check if backend server is running on localhost:3001',
+          }
+        );
+      }
+
       throw error;
     }
-
-    return response.json();
   }
 
   async get<T>(endpoint: string): Promise<T> {
@@ -103,6 +181,13 @@ class ApiClient {
     });
   }
 
+  async put<T>(endpoint: string, data?: any): Promise<T> {
+    return this.request<T>(endpoint, {
+      method: 'PUT',
+      body: data ? JSON.stringify(data) : undefined,
+    });
+  }
+
   async delete<T>(endpoint: string): Promise<T> {
     return this.request<T>(endpoint, { method: 'DELETE' });
   }
@@ -119,6 +204,8 @@ export const queryKeys = {
   group: (id: string) => ['groups', id] as const,
   groupExpenses: (groupId: string) => ['groups', groupId, 'expenses'] as const,
   groupBalances: (groupId: string) => ['groups', groupId, 'balances'] as const,
+  groupSettlements: (groupId: string) => ['groups', groupId, 'settlements'] as const,
+  groupSettlementRecords: (groupId: string) => ['groups', groupId, 'settlement-records'] as const,
   groupDrafts: (groupId: string) => ['groups', groupId, 'drafts'] as const,
   expense: (id: string) => ['expenses', id] as const,
   draft: (id: string) => ['drafts', id] as const,
@@ -286,22 +373,153 @@ export const useCreateExpense = () => {
         'Idempotency-Key': `expense-${Date.now()}-${Math.random()}`,
       }),
     onSuccess: (_, { groupId }) => {
-      // Invalidate related queries
+      // Invalidate and refetch related queries immediately
       queryClient.invalidateQueries({
         queryKey: queryKeys.groupExpenses(groupId),
       });
+      queryClient.refetchQueries({
+        queryKey: queryKeys.groupExpenses(groupId),
+      });
+
       queryClient.invalidateQueries({
         queryKey: queryKeys.groupBalances(groupId),
+      });
+      queryClient.refetchQueries({
+        queryKey: queryKeys.groupBalances(groupId),
+      });
+
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.groupSettlements(groupId),
+      });
+      queryClient.refetchQueries({
+        queryKey: queryKeys.groupSettlements(groupId),
+      });
+
+      // Also invalidate the group itself to refresh member info if needed
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.group(groupId),
       });
     },
   });
 };
 
-// Balances API hooks (placeholder)
+export const useUpdateExpense = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      expenseId,
+      groupId,
+      expense,
+    }: {
+      expenseId: string;
+      groupId: string;
+      expense: UpdateExpenseRequest;
+    }) => apiClient.put<Expense>(`/v1/expenses/${expenseId}`, expense),
+    onSuccess: (_, { groupId, expenseId }) => {
+      // Invalidate and refetch related queries immediately
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.expense(expenseId),
+      });
+      queryClient.refetchQueries({
+        queryKey: queryKeys.expense(expenseId),
+      });
+
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.groupExpenses(groupId),
+      });
+      queryClient.refetchQueries({
+        queryKey: queryKeys.groupExpenses(groupId),
+      });
+
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.groupBalances(groupId),
+      });
+      queryClient.refetchQueries({
+        queryKey: queryKeys.groupBalances(groupId),
+      });
+
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.groupSettlements(groupId),
+      });
+      queryClient.refetchQueries({
+        queryKey: queryKeys.groupSettlements(groupId),
+      });
+
+      // Also invalidate the group itself
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.group(groupId),
+      });
+    },
+  });
+};
+
+export const useDeleteExpense = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      expenseId,
+      groupId,
+    }: {
+      expenseId: string;
+      groupId: string;
+    }) => apiClient.delete(`/v1/expenses/${expenseId}`),
+    onSuccess: (_, { groupId, expenseId }) => {
+      // Remove the expense from cache
+      queryClient.removeQueries({ queryKey: queryKeys.expense(expenseId) });
+
+      // Invalidate and refetch related queries immediately
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.groupExpenses(groupId),
+      });
+      queryClient.refetchQueries({
+        queryKey: queryKeys.groupExpenses(groupId),
+      });
+
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.groupBalances(groupId),
+      });
+      queryClient.refetchQueries({
+        queryKey: queryKeys.groupBalances(groupId),
+      });
+
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.groupSettlements(groupId),
+      });
+      queryClient.refetchQueries({
+        queryKey: queryKeys.groupSettlements(groupId),
+      });
+
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.groupSettlementRecords(groupId),
+      });
+      queryClient.refetchQueries({
+        queryKey: queryKeys.groupSettlementRecords(groupId),
+      });
+
+      // Also invalidate the group itself
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.group(groupId),
+      });
+    },
+  });
+};
+
+// Balances API hooks
 export const useGroupBalances = (groupId: string) => {
   return useQuery({
     queryKey: queryKeys.groupBalances(groupId),
     queryFn: () => apiClient.get<Balance[]>(`/v1/groups/${groupId}/balances`),
+    enabled: !!groupId,
+  });
+};
+
+// Settlements API hooks
+export const useGroupSettlements = (groupId: string) => {
+  return useQuery({
+    queryKey: queryKeys.groupSettlements(groupId),
+    queryFn: () => apiClient.get<Settlement[]>(`/v1/groups/${groupId}/settlements`),
     enabled: !!groupId,
   });
 };
@@ -461,4 +679,55 @@ export const getErrorMessage = (error: unknown): string => {
   }
 
   return 'An unexpected error occurred.';
+};
+
+// Settlement Records API hooks
+export const useGroupSettlementRecords = (groupId: string) => {
+  return useQuery({
+    queryKey: queryKeys.groupSettlementRecords(groupId),
+    queryFn: () => apiClient.get<SettlementRecord[]>(`/v1/groups/${groupId}/settlement-records`),
+    enabled: !!groupId,
+  });
+};
+
+export const useCreateSettlementRecord = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      groupId,
+      settlement,
+    }: {
+      groupId: string;
+      settlement: CreateSettlementRequest;
+    }) => apiClient.post<SettlementRecord>(`/v1/groups/${groupId}/settlement-records`, settlement),
+    onSuccess: (_, { groupId }) => {
+      // Invalidate and refetch related queries immediately
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.groupSettlementRecords(groupId),
+      });
+      queryClient.refetchQueries({
+        queryKey: queryKeys.groupSettlementRecords(groupId),
+      });
+
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.groupBalances(groupId),
+      });
+      queryClient.refetchQueries({
+        queryKey: queryKeys.groupBalances(groupId),
+      });
+
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.groupSettlements(groupId),
+      });
+      queryClient.refetchQueries({
+        queryKey: queryKeys.groupSettlements(groupId),
+      });
+
+      // Also invalidate the group itself to refresh any summary info
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.group(groupId),
+      });
+    },
+  });
 };

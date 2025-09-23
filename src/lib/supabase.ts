@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
+import { logger, LogCategory } from './logger';
 
 // Supabase configuration
 const supabaseUrl =
@@ -46,13 +47,43 @@ export const setupAuthListener = (callback: (user: any) => void) => {
 
 // Sign in with email and password
 export const signInWithEmail = async (email: string, password: string) => {
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email,
-    password,
-  });
+  logger.info(LogCategory.AUTH, 'Attempting email sign in', { email });
 
-  if (error) throw error;
-  return data;
+  try {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      logger.auth({
+        action: 'sign_in',
+        email,
+        method: 'email',
+        success: false,
+        error: error.message,
+      });
+      throw error;
+    }
+
+    logger.auth({
+      action: 'sign_in',
+      email,
+      userId: data.user?.id,
+      method: 'email',
+      success: true,
+    });
+
+    return data;
+  } catch (error) {
+    logger.error(
+      LogCategory.AUTH,
+      'Sign in failed',
+      error as Error,
+      { email }
+    );
+    throw error;
+  }
 };
 
 // Sign up with email and password

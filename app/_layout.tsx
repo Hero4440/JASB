@@ -5,9 +5,11 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { NativeWindStyleSheet } from 'nativewind';
 import React, { useEffect, useState } from 'react';
+import { View } from 'react-native';
 
 import { setupDeepLinking } from '../src/lib/linking';
 import { getCurrentUser, setupAuthListener } from '../src/lib/supabase';
+import { DebugButton } from '../src/components/DebugPanel';
 
 // Keep splash screen visible while we fetch resources
 SplashScreen.preventAutoHideAsync();
@@ -36,8 +38,9 @@ interface AuthContextType {
     email: string,
     password: string,
     userData?: { name?: string },
-  ) => Promise<void>;
+  ) => Promise<any>;
   signOut: () => Promise<void>;
+  refreshAuth: () => Promise<void>;
 }
 
 const AuthContext = React.createContext<AuthContextType>({} as AuthContextType);
@@ -54,29 +57,34 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    const initAuth = async () => {
-      try {
-        // In development, first check for dev user
-        if (__DEV__) {
-          const devUser = await AsyncStorage.getItem('dev_user');
-          if (devUser) {
-            setUser(JSON.parse(devUser));
-            setIsLoading(false);
-            return;
-          }
+  const initAuth = async () => {
+    try {
+      // In development, first check for dev user
+      if (__DEV__) {
+        const devUser = await AsyncStorage.getItem('dev_user');
+        if (devUser) {
+          setUser(JSON.parse(devUser));
+          setIsLoading(false);
+          return;
         }
-
-        // Check for existing Supabase session
-        const user = await getCurrentUser();
-        setUser(user);
-        setIsLoading(false);
-      } catch (error) {
-        console.log('Auth initialization error:', error);
-        setIsLoading(false);
       }
-    };
 
+      // Check for existing Supabase session
+      const user = await getCurrentUser();
+      setUser(user);
+      setIsLoading(false);
+    } catch (error) {
+      console.log('Auth initialization error:', error);
+      setIsLoading(false);
+    }
+  };
+
+  const refreshAuth = async () => {
+    setIsLoading(true);
+    await initAuth();
+  };
+
+  useEffect(() => {
     initAuth();
 
     // Listen for auth changes (Supabase)
@@ -115,7 +123,6 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
 
     if (result.user) {
       // Create user profile immediately if email confirmation is not required
-      const { useCreateUserProfile } = await import('../src/lib/api');
       // Note: In production, this should be handled by a webhook or server-side trigger
       // For now, we'll handle it client-side
     }
@@ -143,6 +150,7 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     signIn,
     signUp,
     signOut,
+    refreshAuth,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -179,86 +187,89 @@ export default function Layout() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <StatusBar style="auto" />
-        <Stack
-          screenOptions={{
-            headerStyle: {
-              backgroundColor: '#f8fafc', // bg-slate-50
-            },
-            headerTintColor: '#1e293b', // text-slate-800
-            headerTitleStyle: {
-              fontWeight: '600',
-            },
-          }}
-        >
-          <Stack.Screen
-            name="index"
-            options={{
-              title: 'My Groups',
-              headerLargeTitle: true,
+        <View className="flex-1">
+          <StatusBar style="auto" />
+          <Stack
+            screenOptions={{
+              headerStyle: {
+                backgroundColor: '#f8fafc', // bg-slate-50
+              },
+              headerTintColor: '#1e293b', // text-slate-800
+              headerTitleStyle: {
+                fontWeight: '600',
+              },
             }}
-          />
-          <Stack.Screen
-            name="groups/[id]/index"
-            options={{
-              title: 'Group Details',
-              presentation: 'card',
-            }}
-          />
-          <Stack.Screen
-            name="groups/[id]/add-expense"
-            options={{
-              title: 'Add Expense',
-              presentation: 'modal',
-            }}
-          />
-          <Stack.Screen
-            name="auth/sign-in"
-            options={{
-              title: 'Sign In',
-              presentation: 'modal',
-              headerShown: false,
-            }}
-          />
-          <Stack.Screen
-            name="auth/sign-up"
-            options={{
-              title: 'Sign Up',
-              presentation: 'modal',
-              headerShown: false,
-            }}
-          />
-          <Stack.Screen
-            name="auth/reset-password"
-            options={{
-              title: 'Reset Password',
-              presentation: 'modal',
-              headerShown: false,
-            }}
-          />
-          <Stack.Screen
-            name="auth/dev-sign-in"
-            options={{
-              title: 'Development Sign In',
-              presentation: 'modal',
-              headerShown: false,
-            }}
-          />
-          <Stack.Screen
-            name="auth/verify"
-            options={{
-              title: 'Email Verification',
-              headerShown: false,
-            }}
-          />
-          <Stack.Screen
-            name="auth/update-password"
-            options={{
-              title: 'Update Password',
-              headerShown: false,
-            }}
-          />
-        </Stack>
+          >
+            <Stack.Screen
+              name="index"
+              options={{
+                title: 'My Groups',
+                headerLargeTitle: true,
+              }}
+            />
+            <Stack.Screen
+              name="groups/[id]/index"
+              options={{
+                title: 'Group Details',
+                presentation: 'card',
+              }}
+            />
+            <Stack.Screen
+              name="groups/[id]/add-expense"
+              options={{
+                title: 'Add Expense',
+                presentation: 'modal',
+              }}
+            />
+            <Stack.Screen
+              name="auth/sign-in"
+              options={{
+                title: 'Sign In',
+                presentation: 'modal',
+                headerShown: false,
+              }}
+            />
+            <Stack.Screen
+              name="auth/sign-up"
+              options={{
+                title: 'Sign Up',
+                presentation: 'modal',
+                headerShown: false,
+              }}
+            />
+            <Stack.Screen
+              name="auth/reset-password"
+              options={{
+                title: 'Reset Password',
+                presentation: 'modal',
+                headerShown: false,
+              }}
+            />
+            <Stack.Screen
+              name="auth/dev-sign-in"
+              options={{
+                title: 'Development Sign In',
+                presentation: 'modal',
+                headerShown: false,
+              }}
+            />
+            <Stack.Screen
+              name="auth/verify"
+              options={{
+                title: 'Email Verification',
+                headerShown: false,
+              }}
+            />
+            <Stack.Screen
+              name="auth/update-password"
+              options={{
+                title: 'Update Password',
+                headerShown: false,
+              }}
+            />
+          </Stack>
+          <DebugButton />
+        </View>
       </AuthProvider>
     </QueryClientProvider>
   );

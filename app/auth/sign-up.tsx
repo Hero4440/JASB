@@ -3,8 +3,10 @@ import { View, Text, TextInput, TouchableOpacity, Alert, KeyboardAvoidingView, P
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '../_layout';
 import { getErrorMessage } from '../../src/lib/api';
+import { logger } from '../../src/lib/logger';
 
 const SignUpScreen = () => {
   const [name, setName] = useState('');
@@ -15,6 +17,60 @@ const SignUpScreen = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const { signUp } = useAuth();
+
+  const handleDevSignUp = async () => {
+    if (!name.trim() || !email.trim()) {
+      Alert.alert('Error', 'Please enter your name and email');
+      return;
+    }
+
+    setIsLoading(true);
+    logger.userAction('Development signup attempted', { email: email.trim() });
+
+    try {
+      // Create mock user data for development
+      const mockUser = {
+        id: `dev_${Date.now()}`,
+        email: email.trim().toLowerCase(),
+        user_metadata: {
+          name: name.trim(),
+        },
+      };
+
+      // Store in async storage to simulate authentication
+      await AsyncStorage.setItem('dev_user', JSON.stringify(mockUser));
+
+      logger.auth({
+        action: 'sign_up',
+        email: mockUser.email,
+        userId: mockUser.id,
+        method: 'dev_bypass',
+        success: true,
+      });
+
+      Alert.alert(
+        'Account Created!',
+        'Development account created successfully. You are now signed in.',
+        [
+          {
+            text: 'Continue',
+            onPress: () => router.replace('/'),
+          },
+        ]
+      );
+    } catch (error) {
+      logger.auth({
+        action: 'sign_up',
+        email: email.trim(),
+        method: 'dev_bypass',
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      Alert.alert('Error', 'Failed to create development account');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleSignUp = async () => {
     if (!name.trim() || !email.trim() || !password.trim() || !confirmPassword.trim()) {
@@ -33,11 +89,20 @@ const SignUpScreen = () => {
     }
 
     setIsLoading(true);
+    logger.userAction('Production signup attempted', { email: email.trim() });
+
     try {
       await signUp(email.trim().toLowerCase(), password, {
         name: name.trim(),
       });
-      
+
+      logger.auth({
+        action: 'sign_up',
+        email: email.trim(),
+        method: 'email',
+        success: true,
+      });
+
       Alert.alert(
         'Check Your Email',
         'We sent you a confirmation link. Please check your email and click the link to verify your account.',
@@ -49,7 +114,37 @@ const SignUpScreen = () => {
         ]
       );
     } catch (error) {
-      Alert.alert('Sign Up Failed', getErrorMessage(error));
+      logger.auth({
+        action: 'sign_up',
+        email: email.trim(),
+        method: 'email',
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+
+      // Show different options based on the error
+      const errorMessage = getErrorMessage(error);
+      const isNetworkError = errorMessage.includes('Network request failed') ||
+                            errorMessage.includes('fetch');
+
+      if (isNetworkError && __DEV__) {
+        Alert.alert(
+          'Sign Up Failed',
+          'Network connection failed. Would you like to create a development account instead?',
+          [
+            {
+              text: 'Cancel',
+              style: 'cancel',
+            },
+            {
+              text: 'Create Dev Account',
+              onPress: handleDevSignUp,
+            },
+          ]
+        );
+      } else {
+        Alert.alert('Sign Up Failed', errorMessage);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -163,6 +258,27 @@ const SignUpScreen = () => {
               </TouchableOpacity>
             </View>
           </View>
+
+          {/* Development Quick Signup (Development Mode Only) */}
+          {__DEV__ && (
+            <TouchableOpacity
+              onPress={handleDevSignUp}
+              disabled={isLoading}
+              className={`rounded-lg border-2 border-dashed border-orange-300 bg-orange-50 py-4 mb-4 ${
+                isLoading ? 'opacity-50' : ''
+              }`}
+            >
+              <View className="items-center">
+                <Ionicons name="flash" size={20} color="#ea580c" />
+                <Text className="mt-1 text-sm font-semibold text-orange-700">
+                  {isLoading ? 'Creating...' : 'Quick Dev Signup'}
+                </Text>
+                <Text className="text-xs text-orange-600">
+                  Skip authentication (name & email only)
+                </Text>
+              </View>
+            </TouchableOpacity>
+          )}
 
           {/* Sign Up Button */}
           <TouchableOpacity
