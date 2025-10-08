@@ -469,3 +469,378 @@ Use Supabase Dashboard or integrate with:
 - [Supabase Auth Documentation](https://supabase.com/docs/guides/auth)
 - [Expo Deep Linking Guide](https://docs.expo.dev/guides/deep-linking/)
 - [React Native Authentication Best Practices](https://reactnative.dev/docs/security)
+
+---
+
+# Implementation Checklist
+
+## Phase 1: Supabase Configuration
+
+### Email Templates Setup
+- [ ] Navigate to Supabase Dashboard → Authentication → Email Templates
+- [ ] Customize "Confirm signup" email template
+- [ ] Update confirmation URL to: `yourapp://auth/verify?token_hash={{ .TokenHash }}&type=signup`
+- [ ] Customize "Reset password" email template
+- [ ] Test email templates with sample data
+
+### Email Provider Configuration
+- [ ] Go to Supabase Dashboard → Project Settings → SMTP
+- [ ] Choose email provider (SendGrid/AWS SES/Mailgun/Resend)
+- [ ] Configure SMTP settings:
+  - [ ] Set SMTP host
+  - [ ] Set SMTP port (587 for TLS)
+  - [ ] Set SMTP username
+  - [ ] Set SMTP password/API key
+  - [ ] Set sender email address
+  - [ ] Set sender name
+- [ ] Send test email to verify configuration
+
+### Authentication Settings
+- [ ] Navigate to Supabase Dashboard → Authentication → Settings
+- [ ] Enable email confirmations: **ON**
+- [ ] Enable secure email change: **ON**
+- [ ] Set email confirmation grace period: **24 hours**
+- [ ] Set minimum password length: **6 characters** (or higher)
+- [ ] Configure email rate limiting (e.g., 10 emails per hour)
+- [ ] Set JWT expiry: **3600 seconds** (1 hour)
+- [ ] Enable refresh token rotation
+
+### URL Configuration
+- [ ] Go to Supabase Dashboard → Authentication → URL Configuration
+- [ ] Set Site URL: `https://yourapp.com`
+- [ ] Add redirect URLs:
+  - [ ] `yourapp://auth/verify`
+  - [ ] `yourapp://auth/callback`
+  - [ ] `yourapp://auth/reset-password`
+  - [ ] `exp://localhost:8081/--/auth/verify` (for local dev)
+  - [ ] `exp://192.168.*.*:8081/--/auth/verify` (for LAN dev)
+
+## Phase 2: Database Setup
+
+### Users Table Creation
+- [ ] Open Supabase SQL Editor
+- [ ] Create `public.users` table with columns:
+  - [ ] `id` (UUID, PRIMARY KEY, references auth.users)
+  - [ ] `email` (TEXT, UNIQUE, NOT NULL)
+  - [ ] `name` (TEXT)
+  - [ ] `avatar_url` (TEXT)
+  - [ ] `created_at` (TIMESTAMPTZ)
+  - [ ] `updated_at` (TIMESTAMPTZ)
+
+### Row Level Security (RLS)
+- [ ] Enable RLS on `public.users` table
+- [ ] Create policy: "Users can view own profile"
+  - [ ] Type: SELECT
+  - [ ] Using: `auth.uid() = id`
+- [ ] Create policy: "Users can update own profile"
+  - [ ] Type: UPDATE
+  - [ ] Using: `auth.uid() = id`
+
+### Database Triggers
+- [ ] Create `handle_new_user()` function
+  - [ ] Extract user metadata (name, email)
+  - [ ] Insert into `public.users` table
+  - [ ] Return new record
+- [ ] Create trigger: `on_auth_user_created`
+  - [ ] Trigger ON: auth.users table
+  - [ ] Event: AFTER UPDATE
+  - [ ] Condition: Email confirmation (NULL → NOT NULL)
+  - [ ] Execute: `handle_new_user()`
+- [ ] Create trigger: `on_auth_user_created_immediate`
+  - [ ] Trigger ON: auth.users table
+  - [ ] Event: AFTER INSERT
+  - [ ] Condition: Email already confirmed
+  - [ ] Execute: `handle_new_user()`
+- [ ] Test triggers with sample user creation
+
+## Phase 3: Frontend Configuration
+
+### Environment Variables
+- [ ] Create/update `.env` file
+- [ ] Add `EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co`
+- [ ] Add `EXPO_PUBLIC_SUPABASE_ANON_KEY=your-anon-key`
+- [ ] Add `EXPO_PUBLIC_APP_SCHEME=yourapp`
+- [ ] Add `EXPO_PUBLIC_SITE_URL=https://yourapp.com`
+- [ ] Add `.env` to `.gitignore` (if not already)
+
+### App Configuration (app.json/app.config.js)
+- [ ] Set app scheme: `"scheme": "yourapp"`
+- [ ] Configure iOS settings:
+  - [ ] Set `bundleIdentifier`
+  - [ ] Add `associatedDomains`: `["applinks:yourapp.com"]`
+- [ ] Configure Android settings:
+  - [ ] Set `package` name
+  - [ ] Add `intentFilters` for deep linking
+  - [ ] Set `autoVerify: true` for HTTPS scheme
+  - [ ] Add scheme for `yourapp://`
+
+### Deep Linking Implementation
+- [ ] Verify `/src/lib/linking.ts` handles verification links
+- [ ] Test deep link URL parsing for `token_hash` parameter
+- [ ] Test deep link URL parsing for `type` parameter
+- [ ] Implement handler in `/app/auth/verify.tsx`:
+  - [ ] Extract token_hash from URL
+  - [ ] Extract type from URL
+  - [ ] Call `supabase.auth.verifyOtp()`
+  - [ ] Handle success: redirect to home
+  - [ ] Handle error: show error message
+
+### Email Verification UI
+- [ ] Update `/app/auth/verify.tsx` screen:
+  - [ ] Add loading state while verifying
+  - [ ] Show success message on verification
+  - [ ] Show error message on failure
+  - [ ] Add "Resend verification email" button
+  - [ ] Add navigation to home on success
+
+### Sign-up Flow Enhancement
+- [ ] Update `/app/auth/sign-up.tsx`:
+  - [ ] Improve email validation (regex)
+  - [ ] Add stronger password validation (optional)
+  - [ ] Show "Check your email" message after signup
+  - [ ] Add link to resend verification email
+  - [ ] Handle already verified users
+
+### Resend Verification Email Feature
+- [ ] Create `resendVerificationEmail()` function
+- [ ] Use `supabase.auth.resend()` with type 'signup'
+- [ ] Add UI button on sign-in screen for unverified users
+- [ ] Show success/error feedback
+- [ ] Implement rate limiting (prevent spam)
+
+## Phase 4: Backend Configuration
+
+### Environment Variables
+- [ ] Create/update `backend/.env` file
+- [ ] Add `SUPABASE_URL=https://your-project.supabase.co`
+- [ ] Add `SUPABASE_ANON_KEY=your-anon-key`
+- [ ] Add `SUPABASE_SERVICE_KEY=your-service-role-key`
+- [ ] Add `SUPABASE_JWT_SECRET=your-jwt-secret`
+- [ ] Add `PORT=3000`
+- [ ] Add `NODE_ENV=production`
+- [ ] Add `backend/.env` to `.gitignore`
+
+### JWT Verification Update
+- [ ] Update `/backend/src/auth.ts`:
+  - [ ] Implement proper JWT verification with Supabase JWT secret
+  - [ ] Verify token signature
+  - [ ] Check token expiration
+  - [ ] Extract user claims
+  - [ ] Handle invalid/expired tokens
+
+### Auth Middleware Enhancement
+- [ ] Test `authMiddleware` with real Supabase tokens
+- [ ] Test `optionalAuthMiddleware` behavior
+- [ ] Add logging for auth failures
+- [ ] Implement rate limiting for auth endpoints
+
+## Phase 5: Security Enhancements
+
+### Input Validation
+- [ ] Add email format validation:
+  - [ ] Regex: `/^[^\s@]+@[^\s@]+\.[^\s@]+$/`
+  - [ ] Validate on client side
+  - [ ] Validate on server side
+- [ ] Add strong password validation (optional):
+  - [ ] Minimum 8 characters
+  - [ ] At least 1 uppercase letter
+  - [ ] At least 1 lowercase letter
+  - [ ] At least 1 number
+  - [ ] Optional: 1 special character
+
+### Rate Limiting
+- [ ] Implement signup rate limiting (prevent abuse)
+- [ ] Implement login rate limiting
+- [ ] Implement resend email rate limiting
+- [ ] Add IP-based rate limiting (optional)
+
+### Error Handling
+- [ ] Add comprehensive error messages
+- [ ] Log authentication errors
+- [ ] Handle network failures gracefully
+- [ ] Show user-friendly error messages
+- [ ] Implement retry logic for failed requests
+
+## Phase 6: Testing
+
+### Development Testing
+- [ ] Test sign-up with valid email
+- [ ] Verify email is sent and received
+- [ ] Check spam/junk folder for test emails
+- [ ] Click verification link in email
+- [ ] Verify app opens to `/auth/verify`
+- [ ] Confirm user profile created in database
+- [ ] Verify user is automatically signed in
+- [ ] Test sign-up with invalid email format
+- [ ] Test password mismatch error
+- [ ] Test weak password rejection
+- [ ] Test duplicate email signup
+
+### Email Testing
+- [ ] Test email deliverability
+- [ ] Verify email template rendering (HTML/plain text)
+- [ ] Test all links in email work correctly
+- [ ] Test on multiple email providers:
+  - [ ] Gmail
+  - [ ] Outlook/Hotmail
+  - [ ] Yahoo Mail
+  - [ ] ProtonMail
+  - [ ] Custom domain email
+- [ ] Check email branding and styling
+- [ ] Verify sender name and email display correctly
+
+### Deep Link Testing (iOS)
+- [ ] Test deep link on iOS simulator
+- [ ] Test deep link on physical iOS device
+- [ ] Test with app closed (cold start)
+- [ ] Test with app in background
+- [ ] Test with app already open
+- [ ] Verify Universal Links configuration
+
+### Deep Link Testing (Android)
+- [ ] Test deep link on Android emulator
+- [ ] Test deep link on physical Android device
+- [ ] Test with app closed (cold start)
+- [ ] Test with app in background
+- [ ] Test with app already open
+- [ ] Verify App Links configuration
+
+### Complete Flow Testing
+- [ ] Test full sign-up → verify → sign-in flow
+- [ ] Test password reset flow
+- [ ] Test sign-out and sign-in again
+- [ ] Test session persistence
+- [ ] Test token refresh
+- [ ] Test expired token handling
+
+### Edge Cases Testing
+- [ ] Test with network disconnection
+- [ ] Test with slow network
+- [ ] Test with expired verification link (24h+)
+- [ ] Test clicking verification link twice
+- [ ] Test verification with already verified user
+- [ ] Test concurrent sign-ups with same email
+
+## Phase 7: Production Deployment
+
+### Pre-deployment Checklist
+- [ ] Set up production SMTP provider
+- [ ] Configure production Supabase project (if separate from dev)
+- [ ] Update all environment variables for production
+- [ ] Set production redirect URLs in Supabase
+- [ ] Enable email confirmations in production
+- [ ] Verify database triggers exist in production
+- [ ] Set up custom email templates with branding
+- [ ] Configure error logging (Sentry/LogRocket)
+- [ ] Set up monitoring and alerts
+
+### DNS and Domain Setup
+- [ ] Configure SPF record for email domain
+- [ ] Configure DKIM record for email domain
+- [ ] Configure DMARC record for email domain
+- [ ] Set up iOS Universal Links (apple-app-site-association)
+- [ ] Set up Android App Links (assetlinks.json)
+- [ ] Verify domain ownership with email provider
+
+### Deployment Steps
+- [ ] Deploy backend to production server
+- [ ] Build and submit iOS app to App Store
+- [ ] Build and submit Android app to Play Store
+- [ ] Configure production environment variables
+- [ ] Test production email delivery
+- [ ] Monitor initial production signups
+- [ ] Verify all production URLs work
+
+### Post-deployment Monitoring
+- [ ] Monitor sign-up success rate
+- [ ] Monitor email verification rate
+- [ ] Track email delivery rates
+- [ ] Check error logs for auth failures
+- [ ] Verify database triggers are executing
+- [ ] Monitor performance metrics
+- [ ] Set up alerts for:
+  - [ ] High authentication failure rate
+  - [ ] Email delivery failures
+  - [ ] Database trigger errors
+  - [ ] Abnormal signup patterns
+
+## Phase 8: Additional Features (Optional)
+
+### Enhanced Features
+- [ ] Add social login (Google, Apple, Facebook)
+- [ ] Implement magic link authentication
+- [ ] Add two-factor authentication (2FA)
+- [ ] Implement account deletion flow
+- [ ] Add email change with verification
+- [ ] Implement progressive profiling
+- [ ] Add session management UI
+- [ ] Implement device management
+
+### Analytics and Monitoring
+- [ ] Track sign-up conversion rate
+- [ ] Track email verification completion rate
+- [ ] Track time to verify email
+- [ ] Monitor failed authentication attempts
+- [ ] Track session duration
+- [ ] Monitor active users
+- [ ] Set up funnel analysis for signup flow
+
+### User Experience Improvements
+- [ ] Add password strength indicator
+- [ ] Implement "Remember me" functionality
+- [ ] Add biometric authentication (Face ID/Touch ID)
+- [ ] Implement auto-fill support
+- [ ] Add loading skeletons for better UX
+- [ ] Implement optimistic UI updates
+
+## Phase 9: Documentation
+
+### Developer Documentation
+- [ ] Document authentication flow
+- [ ] Document API endpoints
+- [ ] Document environment variables
+- [ ] Document database schema
+- [ ] Document deployment process
+- [ ] Create troubleshooting guide
+
+### User Documentation
+- [ ] Create sign-up instructions
+- [ ] Create password reset guide
+- [ ] Create FAQ for common issues
+- [ ] Document supported email providers
+- [ ] Create privacy policy
+- [ ] Create terms of service
+
+## Phase 10: Maintenance
+
+### Regular Checks
+- [ ] Review authentication logs weekly
+- [ ] Monitor email deliverability monthly
+- [ ] Update dependencies quarterly
+- [ ] Review and update security policies
+- [ ] Audit user permissions and RLS policies
+- [ ] Test backup and recovery procedures
+
+### Security Audits
+- [ ] Conduct security audit annually
+- [ ] Review and rotate API keys
+- [ ] Check for leaked credentials
+- [ ] Update password policies if needed
+- [ ] Review third-party integrations
+- [ ] Penetration testing (if required)
+
+---
+
+## Quick Start Priorities
+
+For immediate implementation, focus on these critical items first:
+
+1. **Phase 1**: Supabase email templates and SMTP (Items 1-10)
+2. **Phase 2**: Database triggers (Items 11-17)
+3. **Phase 3**: Deep linking verification (Items 26-29)
+4. **Phase 6**: Basic testing (Items 44-51)
+5. **Phase 7**: Production deployment (Items 72-80)
+
+---
+
+**Note**: Check items off as you complete them. Some items may not apply to your specific use case. Adjust priorities based on your timeline and requirements.
