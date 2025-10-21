@@ -3,7 +3,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { FlatList, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { useGroupDrafts } from '../../../../src/lib/api';
+import { getErrorMessage, useGroupDrafts } from '../../../../src/lib/api';
 
 const DraftsList = () => {
   const { id: groupId } = useLocalSearchParams<{ id: string }>();
@@ -85,7 +85,7 @@ const DraftsList = () => {
       <SafeAreaView className="flex-1 bg-gray-50">
         <View className="flex-1 items-center justify-center px-4">
           <Text className="mb-4 text-center text-red-600">
-            Failed to load drafts: {error.message}
+            Failed to load drafts: {getErrorMessage(error)}
           </Text>
           <TouchableOpacity
             className="rounded bg-blue-600 px-4 py-2"

@@ -6,7 +6,8 @@ import type {
 import type { FastifyInstance } from 'fastify';
 import pino from 'pino';
 
-import { db } from '../db.js';
+import { authMiddleware } from '../auth.js';
+import { query, withTransaction } from '../db.js';
 import {
   ApproveDraftSchema,
   CreateDraftSchema,
@@ -15,7 +16,43 @@ import {
 
 const logger = pino({ name: 'drafts-routes' });
 
+const formatDraftResponse = (row: any): ExpenseDraft => ({
+  id: row.id,
+  group_id: row.group_id,
+  created_by: row.created_by,
+  created_by_user: row.created_by_id
+    ? {
+        id: row.created_by_id,
+        name: row.created_by_name,
+        email: row.created_by_email,
+      }
+    : undefined,
+  title: row.title,
+  amount_cents: row.amount_cents,
+  paid_by: row.paid_by,
+  paid_by_user: row.paid_by_id
+    ? {
+        id: row.paid_by_id,
+        name: row.paid_by_name,
+        email: row.paid_by_email,
+      }
+    : undefined,
+  participants: JSON.parse(row.participants),
+  split_type: row.split_type,
+  status: row.status,
+  source: row.source,
+  llm_metadata: row.llm_metadata ? JSON.parse(row.llm_metadata) : undefined,
+  validation_warnings: row.validation_warnings
+    ? JSON.parse(row.validation_warnings)
+    : undefined,
+  created_at: row.created_at,
+  updated_at: row.updated_at,
+});
+
 export default async function draftRoutes(fastify: FastifyInstance) {
+  // All routes require authentication
+  fastify.addHook('preHandler', authMiddleware);
+
   // Create a new expense draft
   fastify.post<{
     Params: { groupId: string };
@@ -46,7 +83,7 @@ export default async function draftRoutes(fastify: FastifyInstance) {
 
     try {
       // Verify user is a member of the group
-      const membership = await db.query(
+      const membership = await query(
         'SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2',
         [groupId, userId],
       );
@@ -59,8 +96,8 @@ export default async function draftRoutes(fastify: FastifyInstance) {
       }
 
       // Verify all participants are group members
-      const participantCheck = await db.query(
-        `SELECT user_id FROM group_members 
+      const participantCheck = await query(
+        `SELECT user_id FROM group_members
          WHERE group_id = $1 AND user_id = ANY($2)`,
         [groupId, draft.participants],
       );
@@ -73,8 +110,8 @@ export default async function draftRoutes(fastify: FastifyInstance) {
       }
 
       // Insert the draft
-      const result = await db.query(
-        `INSERT INTO expense_drafts 
+      const result = await query(
+        `INSERT INTO expense_drafts
          (group_id, created_by, title, amount_cents, paid_by, participants, split_type, source, llm_metadata, status)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending_review')
          RETURNING *`,
@@ -94,8 +131,8 @@ export default async function draftRoutes(fastify: FastifyInstance) {
       const createdDraft = result.rows[0];
 
       // Fetch user details for response
-      const draftWithUsers = await db.query(
-        `SELECT 
+      const draftWithUsers = await query(
+        `SELECT
            d.*,
            creator.id as created_by_id, creator.name as created_by_name, creator.email as created_by_email,
            payer.id as paid_by_id, payer.name as paid_by_name, payer.email as paid_by_email
@@ -106,14 +143,14 @@ export default async function draftRoutes(fastify: FastifyInstance) {
         [createdDraft.id],
       );
 
-      const draft_response = formatDraftResponse(draftWithUsers.rows[0]);
+      const draftResponse = formatDraftResponse(draftWithUsers.rows[0]);
 
       logger.info(
         { draftId: createdDraft.id },
         'Expense draft created successfully',
       );
 
-      return await reply.status(201).send(draft_response);
+      return await reply.status(201).send(draftResponse);
     } catch (error) {
       logger.error({ error, groupId, draft }, 'Failed to create expense draft');
       throw error;
@@ -137,7 +174,7 @@ export default async function draftRoutes(fastify: FastifyInstance) {
 
     try {
       // Verify user is a member of the group
-      const membership = await db.query(
+      const membership = await query(
         'SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2',
         [groupId, userId],
       );
@@ -149,8 +186,8 @@ export default async function draftRoutes(fastify: FastifyInstance) {
         });
       }
 
-      let query = `
-        SELECT 
+      let queryText = `
+        SELECT
           d.*,
           creator.id as created_by_id, creator.name as created_by_name, creator.email as created_by_email,
           payer.id as paid_by_id, payer.name as paid_by_name, payer.email as paid_by_email
@@ -162,13 +199,13 @@ export default async function draftRoutes(fastify: FastifyInstance) {
       const params = [groupId];
 
       if (status) {
-        query += ' AND d.status = $2';
+        queryText += ' AND d.status = $2';
         params.push(status);
       }
 
-      query += ' ORDER BY d.created_at DESC';
+      queryText += ' ORDER BY d.created_at DESC';
 
-      const result = await db.query(query, params);
+      const result = await query(queryText, params);
       const drafts = result.rows.map(formatDraftResponse);
 
       return await reply.send(drafts);
@@ -193,7 +230,7 @@ export default async function draftRoutes(fastify: FastifyInstance) {
 
     try {
       // Verify user is a member of the group
-      const membership = await db.query(
+      const membership = await query(
         'SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2',
         [groupId, userId],
       );
@@ -205,7 +242,7 @@ export default async function draftRoutes(fastify: FastifyInstance) {
         });
       }
 
-      const result = await db.query(
+      const result = await query(
         `SELECT 
            d.*,
            creator.id as created_by_id, creator.name as created_by_name, creator.email as created_by_email,
@@ -268,7 +305,7 @@ export default async function draftRoutes(fastify: FastifyInstance) {
 
     try {
       // Verify draft exists and user has access
-      const draftCheck = await db.query(
+      const draftCheck = await query(
         `SELECT d.*, gm.user_id as member_check
          FROM expense_drafts d
          LEFT JOIN group_members gm ON d.group_id = gm.group_id AND gm.user_id = $1
@@ -301,7 +338,7 @@ export default async function draftRoutes(fastify: FastifyInstance) {
 
       // Verify all participants are group members if updating participants
       if (updates.participants) {
-        const participantCheck = await db.query(
+        const participantCheck = await query(
           `SELECT user_id FROM group_members 
            WHERE group_id = $1 AND user_id = ANY($2)`,
           [groupId, updates.participants],
@@ -316,49 +353,51 @@ export default async function draftRoutes(fastify: FastifyInstance) {
       }
 
       // Build update query dynamically
-      const updateFields = [];
-      const params = [];
-      let paramCount = 1;
+      const updateFields: string[] = [];
+      const params: any[] = [];
+
+      const addField = (column: string, value: unknown) => {
+        params.push(value);
+        updateFields.push(`${column} = $${params.length}`);
+      };
 
       if (updates.title) {
-        updateFields.push(`title = $${paramCount++}`);
-        params.push(updates.title);
+        addField('title', updates.title);
       }
 
       if (updates.amount_cents) {
-        updateFields.push(`amount_cents = $${paramCount++}`);
-        params.push(updates.amount_cents);
+        addField('amount_cents', updates.amount_cents);
       }
 
       if (updates.paid_by) {
-        updateFields.push(`paid_by = $${paramCount++}`);
-        params.push(updates.paid_by);
+        addField('paid_by', updates.paid_by);
       }
 
       if (updates.participants) {
-        updateFields.push(`participants = $${paramCount++}`);
-        params.push(JSON.stringify(updates.participants));
+        addField('participants', JSON.stringify(updates.participants));
       }
 
       if (updates.split_type) {
-        updateFields.push(`split_type = $${paramCount++}`);
-        params.push(updates.split_type);
+        addField('split_type', updates.split_type);
       }
 
-      updateFields.push(`updated_at = NOW()`);
+      updateFields.push('updated_at = NOW()');
 
-      params.push(draftId, groupId);
+      params.push(draftId);
+      const draftIdPlaceholder = `$${params.length}`;
+      params.push(groupId);
+      const groupIdPlaceholder = `$${params.length}`;
 
-      const result = await db.query(
+      await query(
         `UPDATE expense_drafts 
          SET ${updateFields.join(', ')}
-         WHERE id = $${paramCount} AND group_id = $${paramCount + 1}
+         WHERE id = ${draftIdPlaceholder} AND group_id = ${groupIdPlaceholder}
          RETURNING *`,
         params,
       );
 
       // Fetch updated draft with user details
-      const updatedDraftResult = await db.query(
+      const updatedDraftResult = await query(
         `SELECT 
            d.*,
            creator.id as created_by_id, creator.name as created_by_name, creator.email as created_by_email,
@@ -416,7 +455,7 @@ export default async function draftRoutes(fastify: FastifyInstance) {
 
     try {
       // Verify draft exists and user has access
-      const draftCheck = await db.query(
+      const draftCheck = await query(
         `SELECT d.*, gm.user_id as member_check, gm.role
          FROM expense_drafts d
          LEFT JOIN group_members gm ON d.group_id = gm.group_id AND gm.user_id = $1
@@ -458,65 +497,75 @@ export default async function draftRoutes(fastify: FastifyInstance) {
 
       if (action === 'approve') {
         // Convert draft to actual expense
-        await db.transaction(async (client) => {
-          // Create the expense
-          const expenseResult = await client.query(
-            `INSERT INTO expenses 
+        const createdExpense = await withTransaction(
+          async (transactionQuery) => {
+            // Create the expense
+            const expenseResult = await transactionQuery(
+              `INSERT INTO expenses
              (group_id, title, amount_cents, currency_code, paid_by, description, created_at, updated_at)
              VALUES ($1, $2, $3, 'USD', $4, $5, NOW(), NOW())
              RETURNING *`,
-            [
-              groupId,
-              draft.title,
-              draft.amount_cents,
-              draft.paid_by,
-              `Approved from draft: ${draft.title}`,
-            ],
-          );
-
-          const expense = expenseResult.rows[0];
-          const participants = JSON.parse(draft.participants);
-
-          // Create expense splits based on split type
-          const splitAmount = Math.floor(
-            draft.amount_cents / participants.length,
-          );
-          const remainder = draft.amount_cents % participants.length;
-
-          for (let i = 0; i < participants.length; i++) {
-            const participantAmount = splitAmount + (i < remainder ? 1 : 0);
-
-            await client.query(
-              `INSERT INTO expense_splits 
-               (expense_id, user_id, amount_cents, split_type)
-               VALUES ($1, $2, $3, $4)`,
               [
-                expense.id,
-                participants[i],
-                participantAmount,
-                draft.split_type,
+                groupId,
+                draft.title,
+                draft.amount_cents,
+                draft.paid_by,
+                `Approved from draft: ${draft.title}`,
               ],
             );
-          }
 
-          // Update draft status
-          await client.query(
-            `UPDATE expense_drafts 
+            const expense = expenseResult.rows[0];
+            const participants = JSON.parse(draft.participants);
+
+            // Create expense splits based on split type
+            const splitAmount = Math.floor(
+              draft.amount_cents / participants.length,
+            );
+            const remainder = draft.amount_cents % participants.length;
+
+            const splitInsertPromises = participants.map(
+              (participantId: string, index: number) => {
+                const participantAmount =
+                  splitAmount + (index < remainder ? 1 : 0);
+
+                return transactionQuery(
+                  `INSERT INTO expense_splits
+               (expense_id, user_id, amount_cents, split_type)
+               VALUES ($1, $2, $3, $4)`,
+                  [
+                    expense.id,
+                    participantId,
+                    participantAmount,
+                    draft.split_type,
+                  ],
+                );
+              },
+            );
+
+            await Promise.all(splitInsertPromises);
+
+            // Update draft status
+            await transactionQuery(
+              `UPDATE expense_drafts
              SET status = 'approved', updated_at = NOW()
              WHERE id = $1`,
-            [draftId],
-          );
+              [draftId],
+            );
 
-          return expense;
-        });
+            return expense;
+          },
+        );
 
         logger.info(
-          { draftId, expenseId: 'created' },
+          {
+            draftId,
+            expenseId: createdExpense.id,
+          },
           'Draft approved and converted to expense',
         );
       } else {
         // Just update the draft status to rejected
-        await db.query(
+        await query(
           `UPDATE expense_drafts 
            SET status = 'rejected', updated_at = NOW()
            WHERE id = $1`,
@@ -527,7 +576,7 @@ export default async function draftRoutes(fastify: FastifyInstance) {
       }
 
       // Return updated draft
-      const updatedDraftResult = await db.query(
+      const updatedDraftResult = await query(
         `SELECT 
            d.*,
            creator.id as created_by_id, creator.name as created_by_name, creator.email as created_by_email,
@@ -565,7 +614,7 @@ export default async function draftRoutes(fastify: FastifyInstance) {
 
     try {
       // Verify draft exists and user has access
-      const draftCheck = await db.query(
+      const draftCheck = await query(
         `SELECT d.*, gm.user_id as member_check, gm.role
          FROM expense_drafts d
          LEFT JOIN group_members gm ON d.group_id = gm.group_id AND gm.user_id = $1
@@ -598,7 +647,7 @@ export default async function draftRoutes(fastify: FastifyInstance) {
         });
       }
 
-      await db.query('DELETE FROM expense_drafts WHERE id = $1', [draftId]);
+      await query('DELETE FROM expense_drafts WHERE id = $1', [draftId]);
 
       logger.info({ draftId }, 'Expense draft deleted successfully');
       return await reply.status(204).send();
@@ -610,39 +659,4 @@ export default async function draftRoutes(fastify: FastifyInstance) {
       throw error;
     }
   });
-}
-
-function formatDraftResponse(row: any): ExpenseDraft {
-  return {
-    id: row.id,
-    group_id: row.group_id,
-    created_by: row.created_by,
-    created_by_user: row.created_by_id
-      ? {
-          id: row.created_by_id,
-          name: row.created_by_name,
-          email: row.created_by_email,
-        }
-      : undefined,
-    title: row.title,
-    amount_cents: row.amount_cents,
-    paid_by: row.paid_by,
-    paid_by_user: row.paid_by_id
-      ? {
-          id: row.paid_by_id,
-          name: row.paid_by_name,
-          email: row.paid_by_email,
-        }
-      : undefined,
-    participants: JSON.parse(row.participants),
-    split_type: row.split_type,
-    status: row.status,
-    source: row.source,
-    llm_metadata: row.llm_metadata ? JSON.parse(row.llm_metadata) : undefined,
-    validation_warnings: row.validation_warnings
-      ? JSON.parse(row.validation_warnings)
-      : undefined,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-  };
 }

@@ -1,3 +1,4 @@
+/* eslint-disable max-classes-per-file */
 import { SUPPORTED_CURRENCIES } from '@shared/types';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -53,13 +54,37 @@ export const InviteToGroupSchema = z.object({
 });
 
 // Expense schemas
-export const SplitTypeSchema = z.enum(['equal', 'percent', 'amount', 'share']);
+const RAW_SPLIT_TYPES = [
+  'equal',
+  'percent',
+  'amount',
+  'share',
+  'exact',
+  'percentage',
+] as const;
+
+export type CanonicalSplitType = 'equal' | 'percent' | 'amount' | 'share';
+
+export function normalizeSplitType(
+  splitType: (typeof RAW_SPLIT_TYPES)[number],
+): CanonicalSplitType {
+  switch (splitType) {
+    case 'exact':
+      return 'amount';
+    case 'percentage':
+      return 'share';
+    default:
+      return splitType;
+  }
+}
+
+export const SplitTypeSchema = z.enum(RAW_SPLIT_TYPES);
 
 export const ExpenseSplitSchema = z.object({
   user_id: UUIDSchema,
   amount_cents: NonNegativeIntegerSchema.optional(),
   percent: z.number().min(0).max(100).optional(),
-  shares: PositiveIntegerSchema.optional(),
+  shares: NonNegativeIntegerSchema.optional(),
 });
 
 export const CreateExpenseSchema = z
@@ -71,27 +96,106 @@ export const CreateExpenseSchema = z
     description: z.string().trim().optional(),
     split_type: SplitTypeSchema.default('equal'),
     splits: z.array(ExpenseSplitSchema).optional(),
+    member_amounts: z
+      .record(z.string().uuid('Invalid member ID'), z.string())
+      .optional(),
+    member_shares: z
+      .record(z.string().uuid('Invalid member ID'), z.string())
+      .optional(),
   })
   .superRefine((data, ctx) => {
+    const canonicalSplitType = normalizeSplitType(data.split_type);
+
     // Validate splits based on split_type
-    if (data.split_type === 'equal') {
+    if (canonicalSplitType === 'equal') {
       // Equal splits don't need individual split amounts
       return;
     }
 
-    if (!data.splits || data.splits.length === 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `Splits array is required for split_type: ${data.split_type}`,
-      });
+    const hasSplitsArray = Array.isArray(data.splits) && data.splits.length > 0;
+
+    if (!hasSplitsArray) {
+      if (canonicalSplitType === 'amount') {
+        const entries = data.member_amounts
+          ? Object.entries(data.member_amounts)
+          : [];
+
+        if (entries.length === 0) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'Member amounts are required for amount splits',
+            path: ['member_amounts'],
+          });
+          return;
+        }
+
+        const totalCents = entries.reduce((sum, [, amount]) => {
+          const parsed = Number.parseFloat(amount);
+          if (!Number.isFinite(parsed) || parsed < 0) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: 'Invalid member amount detected',
+              path: ['member_amounts'],
+            });
+          }
+          return Number.isFinite(parsed) ? sum + Math.round(parsed * 100) : sum;
+        }, 0);
+
+        if (Math.abs(totalCents - data.amount_cents) > 1) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Split amounts (${totalCents}) don't match expense total (${data.amount_cents})`,
+            path: ['member_amounts'],
+          });
+        }
+      } else if (canonicalSplitType === 'share') {
+        const entries = data.member_shares
+          ? Object.entries(data.member_shares)
+          : [];
+
+        if (entries.length === 0) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'Member shares are required for share splits',
+            path: ['member_shares'],
+          });
+          return;
+        }
+
+        const totalShares = entries.reduce((sum, [, shares]) => {
+          const parsed = Number.parseInt(shares, 10);
+          if (!Number.isFinite(parsed) || parsed < 0) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: 'Invalid member share detected',
+              path: ['member_shares'],
+            });
+          }
+          return Number.isFinite(parsed) ? sum + parsed : sum;
+        }, 0);
+
+        if (totalShares <= 0) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'Total shares must be greater than 0',
+            path: ['member_shares'],
+          });
+        }
+      } else {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Splits array is required for split_type: ${data.split_type}`,
+        });
+      }
+
       return;
     }
 
-    // Validate splits based on type
-    data.splits.forEach((split, index) => {
-      switch (data.split_type) {
+    // Validate splits based on type when splits array is provided
+    data.splits!.forEach((split, index) => {
+      switch (canonicalSplitType) {
         case 'amount':
-          if (!split.amount_cents) {
+          if (split.amount_cents === undefined) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
               path: ['splits', index, 'amount_cents'],
@@ -100,7 +204,7 @@ export const CreateExpenseSchema = z
           }
           break;
         case 'percent':
-          if (!split.percent) {
+          if (split.percent === undefined) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
               path: ['splits', index, 'percent'],
@@ -109,7 +213,7 @@ export const CreateExpenseSchema = z
           }
           break;
         case 'share':
-          if (!split.shares) {
+          if (split.shares === undefined) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
               path: ['splits', index, 'shares'],
@@ -117,12 +221,14 @@ export const CreateExpenseSchema = z
             });
           }
           break;
+        default:
+          break;
       }
     });
 
     // Validate totals
-    if (data.split_type === 'amount') {
-      const totalSplits = data.splits.reduce(
+    if (canonicalSplitType === 'amount') {
+      const totalSplits = data.splits!.reduce(
         (sum, split) => sum + (split.amount_cents || 0),
         0,
       );
@@ -135,8 +241,8 @@ export const CreateExpenseSchema = z
       }
     }
 
-    if (data.split_type === 'percent') {
-      const totalPercent = data.splits.reduce(
+    if (canonicalSplitType === 'percent') {
+      const totalPercent = data.splits!.reduce(
         (sum, split) => sum + (split.percent || 0),
         0,
       );
@@ -145,6 +251,19 @@ export const CreateExpenseSchema = z
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: `Split percentages must add up to 100% (got ${totalPercent}%)`,
+        });
+      }
+    }
+
+    if (canonicalSplitType === 'share') {
+      const totalShares = data.splits!.reduce(
+        (sum, split) => sum + (split.shares || 0),
+        0,
+      );
+      if (totalShares <= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Total shares must be greater than 0',
         });
       }
     }
@@ -159,6 +278,12 @@ export const UpdateExpenseSchema = z
     description: z.string().trim().optional(),
     split_type: SplitTypeSchema.optional(),
     splits: z.array(ExpenseSplitSchema).optional(),
+    member_amounts: z
+      .record(z.string().uuid('Invalid member ID'), z.string())
+      .optional(),
+    member_shares: z
+      .record(z.string().uuid('Invalid member ID'), z.string())
+      .optional(),
   })
   .refine((data: any) => Object.keys(data).length > 0, {
     message: 'At least one field must be provided for update',
@@ -212,6 +337,22 @@ export const UUID_SCHEMA = UUIDSchema;
 
 // Idempotency key validation
 export const IdempotencyKeySchema = z.string().min(1).max(255);
+
+// Format Zod validation errors for API response
+export function formatZodError(error: z.ZodError): Record<string, string[]> {
+  const formatted: Record<string, string[]> = {};
+
+  error.issues.forEach((issue) => {
+    const path = issue.path.join('.');
+    const key = path || 'root';
+
+    const messages = formatted[key] ?? [];
+    messages.push(issue.message);
+    formatted[key] = messages;
+  });
+
+  return formatted;
+}
 
 // Request validation middleware
 export function validateRequest<T extends z.ZodTypeAny>(schema: T) {
@@ -272,24 +413,6 @@ export function validateParams<T extends z.ZodTypeAny>(schema: T) {
       throw error;
     }
   };
-}
-
-// Format Zod validation errors for API response
-export function formatZodError(error: z.ZodError): Record<string, string[]> {
-  const formatted: Record<string, string[]> = {};
-
-  error.errors.forEach((err) => {
-    const path = err.path.join('.');
-    const key = path || 'root';
-
-    if (!formatted[key]) {
-      formatted[key] = [];
-    }
-
-    formatted[key]!.push(err.message);
-  });
-
-  return formatted;
 }
 
 // Common error responses

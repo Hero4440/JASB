@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text } from 'react-native';
+import type React from 'react';
+import { useEffect, useState } from 'react';
+import { Text, View } from 'react-native';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -11,7 +12,6 @@ export const ConnectionStatus: React.FC = () => {
     try {
       const response = await fetch(`${API_BASE_URL}/health`, {
         method: 'GET',
-        timeout: 5000,
       });
 
       if (response.ok) {

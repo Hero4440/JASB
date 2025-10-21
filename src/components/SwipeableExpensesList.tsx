@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import type { Expense } from '@shared/types';
 import { ScrollView, Text, View } from 'react-native';
+
 import { SwipeableExpenseCard } from './SwipeableExpenseCard';
 
 interface SwipeableExpensesListProps {
@@ -8,7 +9,6 @@ interface SwipeableExpensesListProps {
   onExpensePress?: (expense: Expense) => void;
   onEditExpense?: (expense: Expense) => void;
   onDeleteExpense?: (expense: Expense) => void;
-  showGroupName?: boolean;
   emptyMessage?: string;
   currentUserId?: string;
   groupCreatorId?: string;
@@ -19,7 +19,6 @@ export function SwipeableExpensesList({
   onExpensePress,
   onEditExpense,
   onDeleteExpense,
-  showGroupName = false,
   emptyMessage = 'No expenses yet',
   currentUserId,
   groupCreatorId,
@@ -35,7 +34,8 @@ export function SwipeableExpensesList({
 
   // Sort expenses by creation date (newest first)
   const sortedExpenses = [...expenses].sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    (a, b) =>
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
   );
 
   // Check if user can edit/delete each expense
@@ -46,7 +46,9 @@ export function SwipeableExpensesList({
 
   const canUserDeleteExpense = (expense: Expense) => {
     // User can delete if they are the payer or if they are the group creator
-    return expense.paid_by === currentUserId || groupCreatorId === currentUserId;
+    return (
+      expense.paid_by === currentUserId || groupCreatorId === currentUserId
+    );
   };
 
   return (
@@ -58,7 +60,6 @@ export function SwipeableExpensesList({
           onPress={onExpensePress}
           onEdit={onEditExpense}
           onDelete={onDeleteExpense}
-          showGroupName={showGroupName}
           canEdit={canUserEditExpense()}
           canDelete={canUserDeleteExpense(expense)}
         />

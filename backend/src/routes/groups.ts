@@ -1,10 +1,15 @@
-import type { Balance, Group } from '@shared/types';
+import type { Balance, Group, Settlement } from '@shared/types';
 import type { FastifyInstance } from 'fastify';
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 
 import { authMiddleware, requireUser } from '../auth';
-import { GroupDB, setCurrentUser, UserDB } from '../db';
+import { BalanceDB, GroupDB, setCurrentUser, UserDB } from '../db';
+import {
+  calculateSettlements,
+  optimizeSettlements,
+  validateSettlements,
+} from '../utils/settlements';
 import {
   CreateGroupSchema,
   ForbiddenError,
@@ -168,6 +173,83 @@ export default async function groupRoutes(fastify: FastifyInstance) {
   );
 
   /**
+   * GET /v1/groups/:id/settlements
+   * Get optimized settlement suggestions for a group
+   */
+  fastify.get<GroupRoutes>(
+    '/v1/groups/:id/settlements',
+    {
+      preHandler: [validateParams(z.object({ id: UUIDSchema }))],
+    },
+    async (request, _reply) => {
+      const userId = requireUser(request);
+      const { id } = request.params as { id: string };
+
+      await setCurrentUser(userId);
+
+      const group = await GroupDB.findById(id);
+
+      if (!group) {
+        throw new NotFoundError('Group', id);
+      }
+
+      const userIsMember = group.members?.some(
+        (member) => member.user_id === userId,
+      );
+      if (!userIsMember) {
+        throw new ForbiddenError('You are not a member of this group');
+      }
+
+      const balances = await BalanceDB.getGroupBalances(id);
+
+      if (!balances.length) {
+        return [] as Settlement[];
+      }
+
+      const memberMap = new Map(
+        (group.members || []).map((member) => [member.user_id, member.user]),
+      );
+
+      const settlementSuggestions = calculateSettlements(
+        balances.map((balance) => ({
+          user_id: balance.user_id,
+          balance_cents: balance.net_cents,
+          user_name: balance.user?.name,
+          user_email: balance.user?.email,
+        })),
+      );
+
+      const optimizedSettlements = optimizeSettlements(settlementSuggestions);
+      const validationResult = validateSettlements(optimizedSettlements);
+
+      if (!validationResult.isValid) {
+        request.log.warn(
+          {
+            errors: validationResult.errors,
+            groupId: id,
+          },
+          'Generated settlements failed validation checks',
+        );
+      }
+
+      const timestamp = new Date().toISOString();
+
+      return optimizedSettlements.map((settlement) => ({
+        id: `${id}:${settlement.from_user}:${settlement.to_user}:${settlement.amount_cents}`,
+        group_id: id,
+        from_user: settlement.from_user,
+        from_user_details: memberMap.get(settlement.from_user) || undefined,
+        to_user: settlement.to_user,
+        to_user_details: memberMap.get(settlement.to_user) || undefined,
+        amount_cents: settlement.amount_cents,
+        status: 'pending' as const,
+        created_at: timestamp,
+        updated_at: timestamp,
+      }));
+    },
+  );
+
+  /**
    * PATCH /v1/groups/:id
    * Update group details (admin only)
    */
@@ -215,6 +297,13 @@ export default async function groupRoutes(fastify: FastifyInstance) {
     '/v1/groups/:id',
     {
       preHandler: [validateParams(z.object({ id: UUIDSchema }))],
+      // Skip body parsing for DELETE requests
+      onRequest: async (request, _reply) => {
+        // Remove content-type header to skip body parsing
+        if (request.headers['content-type'] === 'application/json') {
+          delete request.headers['content-type'];
+        }
+      },
     },
     async (request, _reply) => {
       const userId = requireUser(request);

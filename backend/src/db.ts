@@ -5,7 +5,7 @@ import type {
   Group,
   User,
 } from '@shared/types';
-import type { PoolConfig, QueryResult, QueryResultRow } from 'pg';
+import type { PoolClient, PoolConfig, QueryResult, QueryResultRow } from 'pg';
 import { Pool } from 'pg';
 
 // Database connection pool
@@ -77,15 +77,35 @@ export async function closeDb(): Promise<void> {
 /**
  * Type-safe query helper
  */
+type QueryExecutor = (
+  text: string,
+  params?: any[],
+) => Promise<QueryResult<any>>;
+
+function isQueryExecutor(value: unknown): value is QueryExecutor {
+  return typeof value === 'function';
+}
+
 export async function query<T extends QueryResultRow = any>(
   text: string,
   params?: any[],
+  executor?: PoolClient | QueryExecutor,
 ): Promise<QueryResult<T>> {
   const db = getDb();
   const start = Date.now();
 
+  const run = async () => {
+    if (executor) {
+      if (isQueryExecutor(executor)) {
+        return executor(text, params);
+      }
+      return executor.query<T>(text, params);
+    }
+    return db.query<T>(text, params);
+  };
+
   try {
-    const result = await db.query<T>(text, params);
+    const result = await run();
     const duration = Date.now() - start;
 
     // Log slow queries
@@ -110,8 +130,9 @@ export async function query<T extends QueryResultRow = any>(
 export async function queryOne<T extends QueryResultRow = any>(
   text: string,
   params?: any[],
+  executor?: PoolClient | QueryExecutor,
 ): Promise<T | null> {
-  const result = await query<T>(text, params);
+  const result = await query<T>(text, params, executor);
   return result.rows[0] || null;
 }
 
@@ -121,8 +142,9 @@ export async function queryOne<T extends QueryResultRow = any>(
 export async function queryMany<T extends QueryResultRow = any>(
   text: string,
   params?: any[],
+  executor?: PoolClient | QueryExecutor,
 ): Promise<T[]> {
-  const result = await query<T>(text, params);
+  const result = await query<T>(text, params, executor);
   return result.rows;
 }
 
@@ -130,9 +152,7 @@ export async function queryMany<T extends QueryResultRow = any>(
  * Execute query within a transaction
  */
 export async function withTransaction<T>(
-  callback: (
-    transactionQuery: (text: string, params?: any[]) => Promise<any>,
-  ) => Promise<T>,
+  callback: (transactionQuery: QueryExecutor) => Promise<T>,
 ): Promise<T> {
   const client = await getDb().connect();
 

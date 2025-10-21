@@ -33,9 +33,9 @@ export function MemberSelectionModal({
 
   const getMemberEmail = (member: any) => {
     if (member.user_id === currentUser?.id) {
-      return currentUser.email;
+      return currentUser?.email || member.user?.email || 'Unknown';
     }
-    return member.user?.email;
+    return member.user?.email || 'Unknown';
   };
 
   return (
@@ -106,7 +106,11 @@ export function MemberSelectionModal({
                 <View className="ml-4">
                   {selectedUserId === member.user_id ? (
                     <View className="flex-row items-center">
-                      <Ionicons name="checkmark-circle" size={24} color="#3b82f6" />
+                      <Ionicons
+                        name="checkmark-circle"
+                        size={24}
+                        color="#3b82f6"
+                      />
                     </View>
                   ) : (
                     <View className="h-6 w-6 rounded-full border-2 border-gray-300" />
@@ -125,7 +129,7 @@ export function MemberSelectionModal({
           </View>
 
           {/* Info Section */}
-          <View className="mx-4 my-4 rounded-xl bg-blue-50 p-4">
+          <View className="m-4 rounded-xl bg-blue-50 p-4">
             <View className="flex-row">
               <Ionicons
                 name="information-circle-outline"
@@ -138,7 +142,9 @@ export function MemberSelectionModal({
                   Who Paid This Expense?
                 </Text>
                 <Text className="mt-1 text-sm text-blue-700">
-                  Select the person who actually paid for this expense. This will be used to calculate who owes money to whom when settling up.
+                  Select the person who actually paid for this expense. This
+                  will be used to calculate who owes money to whom when settling
+                  up.
                 </Text>
               </View>
             </View>

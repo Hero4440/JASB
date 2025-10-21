@@ -1,4 +1,9 @@
-import type { Expense, ExpenseSplit } from '@shared/types';
+import type {
+  CreateExpenseRequest,
+  Expense,
+  ExpenseSplit,
+  UpdateExpenseRequest,
+} from '@shared/types';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 
@@ -7,6 +12,7 @@ import { query, queryMany, queryOne, withTransaction } from '../db.js';
 import {
   CreateExpenseSchema,
   ForbiddenError,
+  normalizeSplitType,
   NotFoundError,
   PaginationSchema,
   UpdateExpenseSchema,
@@ -35,7 +41,7 @@ const expensesRoutes: FastifyPluginAsync = async (fastify) => {
       ],
     },
     async (request, reply) => {
-      const { group_id } = (request as any).validatedParams;
+      const { group_id: groupId } = (request as any).validatedParams;
       const { limit, cursor } = (request as any).validatedQuery;
       const user = request.user!;
 
@@ -45,7 +51,7 @@ const expensesRoutes: FastifyPluginAsync = async (fastify) => {
       SELECT role FROM group_members 
       WHERE group_id = $1 AND user_id = $2
     `,
-        [group_id, user.id],
+        [groupId, user.id],
       );
 
       if (!membership) {
@@ -53,7 +59,7 @@ const expensesRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       // Build cursor query
-      let query = `
+      let sql = `
       SELECT 
         e.*,
         u.name as paid_by_name,
@@ -63,14 +69,14 @@ const expensesRoutes: FastifyPluginAsync = async (fastify) => {
       JOIN users u ON e.paid_by = u.id
       WHERE e.group_id = $1
     `;
-      const params: any[] = [group_id];
+      const params: any[] = [groupId];
 
       if (cursor) {
-        query += ` AND e.created_at < $${params.length + 1}`;
+        sql += ` AND e.created_at < $${params.length + 1}`;
         params.push(cursor);
       }
 
-      query += ` ORDER BY e.created_at DESC LIMIT $${params.length + 1}`;
+      sql += ` ORDER BY e.created_at DESC LIMIT $${params.length + 1}`;
       params.push(limit);
 
       const expenses = await queryMany<
@@ -79,13 +85,13 @@ const expensesRoutes: FastifyPluginAsync = async (fastify) => {
           paid_by_name: string;
           paid_by_email: string;
         }
-      >(query, params);
+      >(sql, params);
 
-      const total = expenses.length > 0 ? expenses[0].total_count : 0;
+      const total = expenses.length > 0 ? (expenses[0]!.total_count ?? 0) : 0;
       const hasMore = expenses.length === limit;
       const nextCursor =
         hasMore && expenses.length > 0
-          ? expenses[expenses.length - 1].created_at
+          ? expenses[expenses.length - 1]!.created_at
           : null;
 
       // For each expense, fetch splits
@@ -138,9 +144,13 @@ const expensesRoutes: FastifyPluginAsync = async (fastify) => {
       ],
     },
     async (request, reply) => {
-      const { group_id } = (request as any).validatedParams;
-      const expenseData = (request as any).validatedBody;
+      const { group_id: groupId } = (request as any).validatedParams;
+      const expenseData = (request as any)
+        .validatedBody as CreateExpenseRequest;
       const user = request.user!;
+
+      const originalSplitType = expenseData.split_type ?? 'equal';
+      const splitType = normalizeSplitType(originalSplitType);
 
       // Check for idempotency key
       const idempotencyKey = request.headers['idempotency-key'] as string;
@@ -148,7 +158,7 @@ const expensesRoutes: FastifyPluginAsync = async (fastify) => {
         // Check if we've already processed this request
         const existingResult = await queryOne(
           `
-        SELECT response_data FROM idempotency_keys 
+        SELECT response_data FROM idempotency 
         WHERE key = $1 AND user_id = $2
       `,
           [idempotencyKey, user.id],
@@ -159,14 +169,14 @@ const expensesRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      await withTransaction(async (client) => {
+      return withTransaction(async (client) => {
         // Verify user is member of group
         const membership = await queryOne<{ role: string }>(
           `
         SELECT role FROM group_members 
         WHERE group_id = $1 AND user_id = $2
       `,
-          [group_id, user.id],
+          [groupId, user.id],
           client,
         );
 
@@ -180,7 +190,7 @@ const expensesRoutes: FastifyPluginAsync = async (fastify) => {
         SELECT 1 FROM group_members 
         WHERE group_id = $1 AND user_id = $2
       `,
-          [group_id, expenseData.paid_by],
+          [groupId, expenseData.paid_by],
           client,
         );
 
@@ -190,18 +200,205 @@ const expensesRoutes: FastifyPluginAsync = async (fastify) => {
           );
         }
 
+        const groupMembers = await queryMany<{ user_id: string }>(
+          `
+        SELECT user_id 
+        FROM group_members 
+        WHERE group_id = $1
+      `,
+          [groupId],
+          client,
+        );
+
+        if (groupMembers.length === 0) {
+          throw new ValidationError('Group has no members to split expenses');
+        }
+
+        const memberIdSet = new Set(
+          groupMembers.map((member) => member.user_id),
+        );
+
+        type SplitAccumulator = {
+          user_id: string;
+          amount_cents?: number;
+          percent?: number;
+          shares?: number;
+        };
+
+        const rawSplits: SplitAccumulator[] = Array.isArray(expenseData.splits)
+          ? [...expenseData.splits]
+          : [];
+
+        if (rawSplits.length === 0 && splitType === 'amount') {
+          let hasAmount = false;
+
+          for (const member of groupMembers) {
+            const rawAmount = expenseData.member_amounts?.[member.user_id];
+            const parsedAmount =
+              rawAmount === undefined || rawAmount === ''
+                ? 0
+                : Number.parseFloat(rawAmount);
+
+            if (!Number.isFinite(parsedAmount) || parsedAmount < 0) {
+              throw new ValidationError('Invalid split amount provided');
+            }
+
+            const cents = Math.round(parsedAmount * 100);
+            rawSplits.push({
+              user_id: member.user_id,
+              amount_cents: cents,
+            });
+
+            if (cents > 0) {
+              hasAmount = true;
+            }
+          }
+
+          if (!hasAmount) {
+            throw new ValidationError(
+              'At least one member amount must be greater than 0',
+            );
+          }
+        }
+
+        if (rawSplits.length === 0 && splitType === 'share') {
+          let totalShares = 0;
+
+          for (const member of groupMembers) {
+            const rawShare = expenseData.member_shares?.[member.user_id];
+            const parsedShare =
+              rawShare === undefined || rawShare === ''
+                ? 0
+                : Number.parseInt(rawShare, 10);
+
+            if (!Number.isFinite(parsedShare) || parsedShare < 0) {
+              throw new ValidationError('Invalid share value provided');
+            }
+
+            rawSplits.push({
+              user_id: member.user_id,
+              shares: parsedShare,
+            });
+
+            totalShares += parsedShare;
+          }
+
+          if (totalShares <= 0) {
+            throw new ValidationError('Total shares must be greater than 0');
+          }
+        }
+
+        const normalizedSplitMap = new Map<string, SplitAccumulator>();
+
+        for (const split of rawSplits) {
+          if (!memberIdSet.has(split.user_id)) {
+            throw new ValidationError(
+              'Split includes a user that is not a group member',
+            );
+          }
+
+          const accumulator = normalizedSplitMap.get(split.user_id) ?? {
+            user_id: split.user_id,
+          };
+
+          if (typeof split.amount_cents === 'number') {
+            accumulator.amount_cents = split.amount_cents;
+          }
+          if (typeof split.percent === 'number') {
+            accumulator.percent = split.percent;
+          }
+          if (typeof split.shares === 'number') {
+            accumulator.shares = split.shares;
+          }
+
+          normalizedSplitMap.set(split.user_id, accumulator);
+        }
+
+        const normalizedSplits = Array.from(normalizedSplitMap.values());
+
+        if (splitType !== 'equal' && normalizedSplits.length === 0) {
+          throw new ValidationError(
+            'Split details are required for this split type',
+          );
+        }
+
+        const computedSplits: Array<{ user_id: string; amount_cents: number }> =
+          [];
+
+        if (splitType === 'amount') {
+          for (const split of normalizedSplits) {
+            const amountCents = split.amount_cents ?? 0;
+            if (amountCents < 0) {
+              throw new ValidationError('Split amounts cannot be negative');
+            }
+            computedSplits.push({
+              user_id: split.user_id,
+              amount_cents: amountCents,
+            });
+          }
+        } else if (splitType === 'percent') {
+          for (const split of normalizedSplits) {
+            if (split.percent === undefined) {
+              throw new ValidationError('Percent value missing for split');
+            }
+            computedSplits.push({
+              user_id: split.user_id,
+              amount_cents: Math.round(
+                (split.percent / 100) * expenseData.amount_cents,
+              ),
+            });
+          }
+        } else if (splitType === 'share') {
+          const totalShares = normalizedSplits.reduce(
+            (sum, split) => sum + (split.shares ?? 0),
+            0,
+          );
+
+          if (totalShares <= 0) {
+            throw new ValidationError('Total shares must be greater than 0');
+          }
+
+          for (const split of normalizedSplits) {
+            computedSplits.push({
+              user_id: split.user_id,
+              amount_cents: Math.round(
+                ((split.shares ?? 0) / totalShares) * expenseData.amount_cents,
+              ),
+            });
+          }
+        }
+
+        if (splitType !== 'equal' && computedSplits.length > 0) {
+          const totalAssigned = computedSplits.reduce(
+            (sum, split) => sum + split.amount_cents,
+            0,
+          );
+          const diff = expenseData.amount_cents - totalAssigned;
+          if (diff !== 0) {
+            const adjustmentIndex = computedSplits.length - 1;
+            computedSplits[adjustmentIndex]!.amount_cents += diff;
+          }
+        }
+
+        if (
+          splitType !== 'equal' &&
+          computedSplits.some((split) => split.amount_cents < 0)
+        ) {
+          throw new ValidationError('Split amounts cannot be negative');
+        }
+
         // Create expense
         const expense = await queryOne<Expense>(
           `
         INSERT INTO expenses (
-          group_id, title, amount_cents, currency_code, 
+            group_id, title, amount_cents, currency_code, 
           paid_by, description
         )
         VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING *
       `,
           [
-            group_id,
+            groupId,
             expenseData.title,
             expenseData.amount_cents,
             expenseData.currency_code,
@@ -210,70 +407,42 @@ const expensesRoutes: FastifyPluginAsync = async (fastify) => {
           ],
           client,
         );
+        if (!expense) {
+          throw new Error('Failed to create expense');
+        }
 
-        // Handle splits based on split_type
-        if (expenseData.split_type === 'equal') {
-          // Get all group members and split equally
-          const members = await queryMany<{ user_id: string }>(
-            `
-          SELECT user_id FROM group_members WHERE group_id = $1
-        `,
-            [group_id],
-            client,
-          );
-
+        if (splitType === 'equal') {
           const splitAmount = Math.floor(
-            expenseData.amount_cents / members.length,
+            expenseData.amount_cents / groupMembers.length,
           );
-          const remainder = expenseData.amount_cents % members.length;
+          const remainder = expenseData.amount_cents % groupMembers.length;
 
-          for (let i = 0; i < members.length; i++) {
-            const amount = splitAmount + (i < remainder ? 1 : 0); // Distribute remainder
-            await query(
+          const equalSplitInserts = groupMembers.map((member, index) => {
+            const amount = splitAmount + (index < remainder ? 1 : 0);
+            return query(
               `
-            INSERT INTO expense_splits (expense_id, user_id, amount_cents)
-            VALUES ($1, $2, $3)
+            INSERT INTO expense_splits (expense_id, user_id, amount_cents, split_type)
+            VALUES ($1, $2, $3, $4)
           `,
-              [expense.id, members[i].user_id, amount],
+              [expense.id, member.user_id, amount, splitType],
               client,
             );
-          }
-        } else if (expenseData.splits) {
-          // Use provided splits
-          for (const split of expenseData.splits) {
-            let splitAmountCents: number;
+          });
 
-            switch (expenseData.split_type) {
-              case 'amount':
-                splitAmountCents = split.amount_cents!;
-                break;
-              case 'percent':
-                splitAmountCents = Math.round(
-                  (split.percent! / 100) * expenseData.amount_cents,
-                );
-                break;
-              case 'share':
-                const totalShares = expenseData.splits.reduce(
-                  (sum, s) => sum + (s.shares || 0),
-                  0,
-                );
-                splitAmountCents = Math.round(
-                  (split.shares! / totalShares) * expenseData.amount_cents,
-                );
-                break;
-              default:
-                throw new ValidationError('Invalid split type');
-            }
-
-            await query(
+          await Promise.all(equalSplitInserts);
+        } else {
+          const splitInsertPromises = computedSplits.map((split) =>
+            query(
               `
-            INSERT INTO expense_splits (expense_id, user_id, amount_cents)
-            VALUES ($1, $2, $3)
+            INSERT INTO expense_splits (expense_id, user_id, amount_cents, split_type)
+            VALUES ($1, $2, $3, $4)
           `,
-              [expense.id, split.user_id, splitAmountCents],
+              [expense.id, split.user_id, split.amount_cents, splitType],
               client,
-            );
-          }
+            ),
+          );
+
+          await Promise.all(splitInsertPromises);
         }
 
         // Fetch complete expense with splits
@@ -294,8 +463,35 @@ const expensesRoutes: FastifyPluginAsync = async (fastify) => {
           client,
         );
 
+        const memberAmountsResponse =
+          splitType === 'amount'
+            ? Object.fromEntries(
+                computedSplits.map((split) => [
+                  split.user_id,
+                  (split.amount_cents / 100).toFixed(2),
+                ]),
+              )
+            : undefined;
+
+        const memberSharesResponse =
+          splitType === 'share'
+            ? Object.fromEntries(
+                normalizedSplits.map((split) => [
+                  split.user_id,
+                  String(split.shares ?? 0),
+                ]),
+              )
+            : undefined;
+
         const completeExpense = {
           ...expense,
+          split_type: originalSplitType ?? splitType,
+          ...(memberAmountsResponse
+            ? { member_amounts: memberAmountsResponse }
+            : {}),
+          ...(memberSharesResponse
+            ? { member_shares: memberSharesResponse }
+            : {}),
           splits,
         };
 
@@ -303,9 +499,9 @@ const expensesRoutes: FastifyPluginAsync = async (fastify) => {
         if (idempotencyKey) {
           await query(
             `
-          INSERT INTO idempotency_keys (key, user_id, response_data)
+          INSERT INTO idempotency (key, user_id, response_data)
           VALUES ($1, $2, $3)
-          ON CONFLICT (key, user_id) DO NOTHING
+          ON CONFLICT (key) DO NOTHING
         `,
             [
               idempotencyKey,
@@ -316,7 +512,7 @@ const expensesRoutes: FastifyPluginAsync = async (fastify) => {
           );
         }
 
-        reply.status(201).send({ data: completeExpense });
+        return reply.status(201).send({ data: completeExpense });
       });
     },
   );
@@ -389,7 +585,7 @@ const expensesRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const { id } = (request as any).validatedParams;
-      const updateData = (request as any).validatedBody;
+      const updateData = (request as any).validatedBody as UpdateExpenseRequest;
       const user = request.user!;
 
       await withTransaction(async (client) => {
@@ -433,8 +629,16 @@ const expensesRoutes: FastifyPluginAsync = async (fastify) => {
         let paramIndex = 1;
 
         Object.entries(updateData).forEach(([key, value]) => {
-          if (value !== undefined && key !== 'splits') {
-            updateFields.push(`${key} = $${paramIndex++}`);
+          if (
+            value !== undefined &&
+            key !== 'splits' &&
+            key !== 'split_type' &&
+            key !== 'member_amounts' &&
+            key !== 'member_shares'
+          ) {
+            const placeholder = `$${paramIndex}`;
+            paramIndex += 1;
+            updateFields.push(`${key} = ${placeholder}`);
             updateValues.push(value);
           }
         });
@@ -460,16 +664,19 @@ const expensesRoutes: FastifyPluginAsync = async (fastify) => {
             client,
           );
 
-          for (const split of updateData.splits) {
-            await query(
+          const splitInsertPromises = updateData.splits.map((split) => {
+            const amountCents = split.amount_cents ?? 0;
+            return query(
               `
             INSERT INTO expense_splits (expense_id, user_id, amount_cents)
             VALUES ($1, $2, $3)
           `,
-              [id, split.user_id, split.amount_cents],
+              [id, split.user_id, amountCents],
               client,
             );
-          }
+          });
+
+          await Promise.all(splitInsertPromises);
         }
 
         // Return updated expense

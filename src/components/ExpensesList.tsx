@@ -5,21 +5,19 @@ import { Pressable, ScrollView, Text, View } from 'react-native';
 interface ExpensesListProps {
   expenses: Expense[];
   onExpensePress?: (expense: Expense) => void;
-  showGroupName?: boolean;
   emptyMessage?: string;
 }
 
 interface ExpenseCardProps {
   expense: Expense;
   onPress?: (expense: Expense) => void;
-  showGroupName?: boolean;
 }
 
-function ExpenseCard({ expense, onPress, showGroupName }: ExpenseCardProps) {
+function ExpenseCard({ expense, onPress }: ExpenseCardProps) {
   const formatAmount = (amount: number, currency: string) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
-      currency: currency,
+      currency,
     }).format(amount);
   };
 
@@ -46,13 +44,14 @@ function ExpenseCard({ expense, onPress, showGroupName }: ExpenseCardProps) {
 
     if (diffDays === 0) {
       return 'Today';
-    } else if (diffDays === 1) {
-      return 'Yesterday';
-    } else if (diffDays < 7) {
-      return `${diffDays} days ago`;
-    } else {
-      return date.toLocaleDateString();
     }
+    if (diffDays === 1) {
+      return 'Yesterday';
+    }
+    if (diffDays < 7) {
+      return `${diffDays} days ago`;
+    }
+    return date.toLocaleDateString();
   };
 
   const getSplitInfo = () => {
@@ -93,9 +92,7 @@ function ExpenseCard({ expense, onPress, showGroupName }: ExpenseCardProps) {
 
           <View className="flex-row items-center">
             <Ionicons name="people-outline" size={14} color="#6b7280" />
-            <Text className="ml-1 text-sm text-gray-600">
-              {getSplitInfo()}
-            </Text>
+            <Text className="ml-1 text-sm text-gray-600">{getSplitInfo()}</Text>
           </View>
 
           <Text className="mt-2 text-xs text-gray-500">
@@ -128,7 +125,6 @@ function ExpenseCard({ expense, onPress, showGroupName }: ExpenseCardProps) {
 export function ExpensesList({
   expenses,
   onExpensePress,
-  showGroupName = false,
   emptyMessage = 'No expenses yet',
 }: ExpensesListProps) {
   if (!expenses || expenses.length === 0) {
@@ -142,7 +138,8 @@ export function ExpensesList({
 
   // Sort expenses by creation date (newest first)
   const sortedExpenses = [...expenses].sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    (a, b) =>
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
   );
 
   return (
@@ -152,7 +149,6 @@ export function ExpensesList({
           key={expense.id}
           expense={expense}
           onPress={onExpensePress}
-          showGroupName={showGroupName}
         />
       ))}
     </ScrollView>
