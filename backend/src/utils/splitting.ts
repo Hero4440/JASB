@@ -30,80 +30,15 @@ export interface SplitCalculationResult {
   errors?: string[];
 }
 
-/**
- * Calculate expense splits based on split type and parameters
- */
-export function calculateExpenseSplits(
-  input: SplitCalculationInput,
-): SplitCalculationResult {
-  const { totalAmountCents, splitType, participants, customSplits } = input;
-
-  // Validation
-  const errors: string[] = [];
-
-  if (totalAmountCents <= 0) {
-    errors.push('Total amount must be positive');
+const normalizeSplitType = (splitType: SplitType): SplitType => {
+  if (splitType === 'exact') {
+    return 'amount';
   }
-
-  if (participants.length === 0) {
-    errors.push('At least one participant is required');
+  if (splitType === 'percentage') {
+    return 'share';
   }
-
-  if (errors.length > 0) {
-    return {
-      splits: [],
-      totalCalculated: 0,
-      isValid: false,
-      errors,
-    };
-  }
-
-  switch (splitType) {
-    case 'equal':
-      return calculateEqualSplit(totalAmountCents, participants);
-
-    case 'amount':
-      if (!customSplits) {
-        return {
-          splits: [],
-          totalCalculated: 0,
-          isValid: false,
-          errors: ['Custom splits required for amount-based splitting'],
-        };
-      }
-      return calculateAmountSplit(totalAmountCents, customSplits);
-
-    case 'percent':
-      if (!customSplits) {
-        return {
-          splits: [],
-          totalCalculated: 0,
-          isValid: false,
-          errors: ['Custom splits required for percentage-based splitting'],
-        };
-      }
-      return calculatePercentSplit(totalAmountCents, customSplits);
-
-    case 'share':
-      if (!customSplits) {
-        return {
-          splits: [],
-          totalCalculated: 0,
-          isValid: false,
-          errors: ['Custom splits required for share-based splitting'],
-        };
-      }
-      return calculateShareSplit(totalAmountCents, customSplits);
-
-    default:
-      return {
-        splits: [],
-        totalCalculated: 0,
-        isValid: false,
-        errors: [`Invalid split type: ${splitType}`],
-      };
-  }
-}
+  return splitType;
+};
 
 /**
  * Calculate equal split among all participants
@@ -271,9 +206,13 @@ function calculatePercentSplit(
     const increment = difference > 0 ? 1 : -1;
     let remaining = Math.abs(difference);
 
-    for (let i = 0; i < splits.length && remaining > 0; i++) {
-      splits[i].amount_cents += increment;
-      remaining--;
+    for (let i = 0; i < splits.length && remaining > 0; i += 1) {
+      const targetSplit = splits[i];
+      if (!targetSplit) {
+        break;
+      }
+      targetSplit.amount_cents += increment;
+      remaining -= 1;
     }
   }
 
@@ -352,12 +291,15 @@ function calculateShareSplit(
   const difference = totalAmountCents - totalCalculated;
   if (difference !== 0) {
     // Add/subtract the difference from the user with the most shares
-    const maxSharesIndex = splits.reduce(
-      (maxIdx, split, idx) =>
-        split.shares! > splits[maxIdx].shares! ? idx : maxIdx,
-      0,
-    );
-    splits[maxSharesIndex].amount_cents += difference;
+    const maxSharesIndex = splits.reduce((maxIdx, split, idx) => {
+      const currentShares = split.shares ?? 0;
+      const maxShares = splits[maxIdx]?.shares ?? 0;
+      return currentShares > maxShares ? idx : maxIdx;
+    }, 0);
+    const targetSplit = splits[maxSharesIndex];
+    if (targetSplit) {
+      targetSplit.amount_cents += difference;
+    }
   }
 
   const finalTotal = splits.reduce((sum, split) => sum + split.amount_cents, 0);
@@ -367,6 +309,80 @@ function calculateShareSplit(
     totalCalculated: finalTotal,
     isValid: finalTotal === totalAmountCents,
   };
+}
+
+/**
+ * Calculate expense splits based on split type and parameters
+ */
+export function calculateExpenseSplits(
+  input: SplitCalculationInput,
+): SplitCalculationResult {
+  const { totalAmountCents, splitType, participants, customSplits } = input;
+  const normalizedSplitType = normalizeSplitType(splitType);
+  const errors: string[] = [];
+
+  if (totalAmountCents <= 0) {
+    errors.push('Total amount must be positive');
+  }
+
+  if (participants.length === 0) {
+    errors.push('At least one participant is required');
+  }
+
+  if (errors.length > 0) {
+    return {
+      splits: [],
+      totalCalculated: 0,
+      isValid: false,
+      errors,
+    };
+  }
+
+  switch (normalizedSplitType) {
+    case 'equal':
+      return calculateEqualSplit(totalAmountCents, participants);
+
+    case 'amount':
+      if (!customSplits) {
+        return {
+          splits: [],
+          totalCalculated: 0,
+          isValid: false,
+          errors: ['Custom splits required for amount-based splitting'],
+        };
+      }
+      return calculateAmountSplit(totalAmountCents, customSplits);
+
+    case 'percent':
+      if (!customSplits) {
+        return {
+          splits: [],
+          totalCalculated: 0,
+          isValid: false,
+          errors: ['Custom splits required for percentage-based splitting'],
+        };
+      }
+      return calculatePercentSplit(totalAmountCents, customSplits);
+
+    case 'share':
+      if (!customSplits) {
+        return {
+          splits: [],
+          totalCalculated: 0,
+          isValid: false,
+          errors: ['Custom splits required for share-based splitting'],
+        };
+      }
+      return calculateShareSplit(totalAmountCents, customSplits);
+
+    default:
+      return {
+        splits: [],
+        totalCalculated: 0,
+        isValid: false,
+        errors: [`Invalid split type: ${splitType}`],
+      };
+  }
 }
 
 /**
@@ -420,12 +436,13 @@ export function getSplitSummaryText(
   const totalAmount = formatSplitAmount(totalAmountCents, currencyCode);
 
   switch (splitType) {
-    case 'equal':
+    case 'equal': {
       const perPerson = formatSplitAmount(
         Math.round(totalAmountCents / participantCount),
         currencyCode,
       );
       return `${totalAmount} split equally among ${participantCount} people (≈${perPerson} each)`;
+    }
 
     case 'amount':
       return `${totalAmount} split by custom amounts`;

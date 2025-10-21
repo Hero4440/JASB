@@ -48,8 +48,8 @@ const DraftReview = () => {
               });
               router.back();
               Alert.alert('Success', 'Draft approved and expense created!');
-            } catch (error) {
-              Alert.alert('Error', getErrorMessage(error));
+            } catch (caughtError) {
+              Alert.alert('Error', getErrorMessage(caughtError));
             }
           },
         },
@@ -69,8 +69,8 @@ const DraftReview = () => {
       setRejectReason('');
       router.back();
       Alert.alert('Draft Rejected', 'The expense draft has been rejected.');
-    } catch (error) {
-      Alert.alert('Error', getErrorMessage(error));
+    } catch (caughtError) {
+      Alert.alert('Error', getErrorMessage(caughtError));
     }
   };
 
@@ -94,8 +94,8 @@ const DraftReview = () => {
                 'Draft Deleted',
                 'The expense draft has been deleted.',
               );
-            } catch (error) {
-              Alert.alert('Error', getErrorMessage(error));
+            } catch (caughtError) {
+              Alert.alert('Error', getErrorMessage(caughtError));
             }
           },
         },
@@ -133,7 +133,7 @@ const DraftReview = () => {
       <SafeAreaView className="flex-1 bg-gray-50">
         <View className="flex-1 items-center justify-center px-4">
           <Text className="mb-4 text-center text-red-600">
-            Failed to load draft: {error?.message || 'Draft not found'}
+            Failed to load draft: {getErrorMessage(error) || 'Draft not found'}
           </Text>
           <TouchableOpacity
             className="rounded bg-blue-600 px-4 py-2"
@@ -148,6 +148,23 @@ const DraftReview = () => {
 
   const isProcessing =
     reviewDraftMutation.isPending || deleteDraftMutation.isPending;
+  const statusStyleMap = {
+    pending_review: {
+      background: 'bg-yellow-100',
+      text: 'text-yellow-800',
+    },
+    approved: {
+      background: 'bg-green-100',
+      text: 'text-green-800',
+    },
+    rejected: {
+      background: 'bg-red-100',
+      text: 'text-red-800',
+    },
+  } as const;
+  const statusStyles =
+    statusStyleMap[draft.status as keyof typeof statusStyleMap] ??
+    statusStyleMap.rejected;
 
   return (
     <SafeAreaView className="flex-1 bg-gray-50">
@@ -158,24 +175,8 @@ const DraftReview = () => {
             <Text className="flex-1 text-2xl font-bold text-gray-900">
               {draft.title}
             </Text>
-            <View
-              className={`rounded px-3 py-1 ${
-                draft.status === 'pending_review'
-                  ? 'bg-yellow-100'
-                  : draft.status === 'approved'
-                  ? 'bg-green-100'
-                  : 'bg-red-100'
-              }`}
-            >
-              <Text
-                className={`text-sm font-medium ${
-                  draft.status === 'pending_review'
-                    ? 'text-yellow-800'
-                    : draft.status === 'approved'
-                    ? 'text-green-800'
-                    : 'text-red-800'
-                }`}
-              >
+            <View className={`rounded px-3 py-1 ${statusStyles.background}`}>
+              <Text className={`text-sm font-medium ${statusStyles.text}`}>
                 {draft.status.replace('_', ' ').toUpperCase()}
               </Text>
             </View>
@@ -205,8 +206,8 @@ const DraftReview = () => {
             <Text className="mb-2 font-semibold text-yellow-800">
               ⚠️ Review Required
             </Text>
-            {draft.validation_warnings.map((warning, index) => (
-              <Text key={index} className="mb-1 text-sm text-yellow-700">
+            {draft.validation_warnings.map((warning: string) => (
+              <Text key={warning} className="mb-1 text-sm text-yellow-700">
                 • {warning}
               </Text>
             ))}
@@ -226,7 +227,7 @@ const DraftReview = () => {
             )}
             {draft.llm_metadata.originalText && (
               <Text className="text-sm text-purple-700">
-                Original: "{draft.llm_metadata.originalText}"
+                Original: &quot;{draft.llm_metadata.originalText}&quot;
               </Text>
             )}
           </View>

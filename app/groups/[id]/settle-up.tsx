@@ -1,9 +1,22 @@
+import type { Settlement } from '@shared/types';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Alert, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useState } from 'react';
+import {
+  Alert,
+  ScrollView,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 
-import { useCreateSettlementRecord, useGroup, useGroupBalances, useGroupSettlements } from '@/lib/api';
-import { getErrorMessage } from '@/lib/api';
+import {
+  getErrorMessage,
+  useCreateSettlementRecord,
+  useGroup,
+  useGroupSettlements,
+} from '@/lib/api';
+
 import { useAuth } from '../../_layout';
 
 export default function SettleUpScreen() {
@@ -11,8 +24,8 @@ export default function SettleUpScreen() {
   const { id: groupId } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuth();
   const { data: group, isLoading: groupLoading } = useGroup(groupId!);
-  const { data: balances, isLoading: balancesLoading } = useGroupBalances(groupId!);
-  const { data: settlements, isLoading: settlementsLoading } = useGroupSettlements(groupId!);
+  const { data: settlements, isLoading: settlementsLoading } =
+    useGroupSettlements(groupId!);
   const createSettlementMutation = useCreateSettlementRecord();
 
   const [selectedSettlement, setSelectedSettlement] = useState<{
@@ -24,16 +37,25 @@ export default function SettleUpScreen() {
   } | null>(null);
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
+  const isAdmin =
+    group?.members?.find((member) => member.user_id === user?.id)?.role ===
+    'admin';
 
   const handleSettleUp = async () => {
     if (!selectedSettlement || !amount || parseFloat(amount) <= 0) {
-      Alert.alert('Error', 'Please select a settlement and enter a valid amount');
+      Alert.alert(
+        'Error',
+        'Please select a settlement and enter a valid amount',
+      );
       return;
     }
 
     const settlementAmount = parseFloat(amount);
     if (settlementAmount > selectedSettlement.maxAmount) {
-      Alert.alert('Error', `Amount cannot exceed $${selectedSettlement.maxAmount.toFixed(2)}`);
+      Alert.alert(
+        'Error',
+        `Amount cannot exceed $${selectedSettlement.maxAmount.toFixed(2)}`,
+      );
       return;
     }
 
@@ -41,11 +63,12 @@ export default function SettleUpScreen() {
       await createSettlementMutation.mutateAsync({
         groupId: groupId!,
         settlement: {
-          from_user_id: selectedSettlement.from_user_id,
-          to_user_id: selectedSettlement.to_user_id,
-          amount: settlementAmount,
-          description: description || `Settlement from ${selectedSettlement.fromUserName} to ${selectedSettlement.toUserName}`,
-          created_by: user?.id, // Track who actually created the record
+          from_user: selectedSettlement.from_user_id,
+          to_user: selectedSettlement.to_user_id,
+          amount_cents: Math.round(settlementAmount * 100),
+          description:
+            description ||
+            `Settlement from ${selectedSettlement.fromUserName} to ${selectedSettlement.toUserName}`,
         },
       });
 
@@ -64,14 +87,14 @@ export default function SettleUpScreen() {
               router.back();
             },
           },
-        ]
+        ],
       );
     } catch (error) {
       Alert.alert('Error', getErrorMessage(error));
     }
   };
 
-  if (groupLoading || balancesLoading || settlementsLoading) {
+  if (groupLoading || settlementsLoading) {
     return (
       <View className="flex-1 items-center justify-center bg-white">
         <Text className="text-gray-600">Loading settle up options...</Text>
@@ -98,13 +121,14 @@ export default function SettleUpScreen() {
     );
   }
 
-  // Check if current user is admin
-  const isAdmin = group?.members?.find(m => m.user_id === user?.id)?.role === 'admin';
-
   // Get settlements - all settlements for admin, only user's settlements for members
-  const availableSettlements = isAdmin
-    ? settlements // Admin can see and manage all settlements
-    : settlements.filter(s => s.from_user_id === user?.id || s.to_user_id === user?.id);
+  const availableSettlements: Settlement[] = isAdmin
+    ? settlements
+    : settlements.filter(
+        (s) =>
+          (s.from_user ?? (s as any).from_user_id) === user?.id ||
+          (s.to_user ?? (s as any).to_user_id) === user?.id,
+      );
 
   return (
     <ScrollView className="flex-1 bg-gray-50">
@@ -116,8 +140,7 @@ export default function SettleUpScreen() {
         <Text className="text-gray-600">
           {isAdmin
             ? 'Record payments for any group members to settle balances'
-            : 'Record payments to settle your balances'
-          }
+            : 'Record payments to settle your balances'}
         </Text>
       </View>
 
@@ -132,64 +155,83 @@ export default function SettleUpScreen() {
             <Text className="text-center text-gray-500">
               {isAdmin
                 ? 'All settled up! No outstanding balances in this group.'
-                : 'No settlements needed for you at this time.'
-              }
+                : 'No settlements needed for you at this time.'}
             </Text>
           </View>
         ) : (
           <View className="space-y-3">
-            {availableSettlements.map((settlement, index) => {
-              const isUserPaying = settlement.from_user_id === user?.id;
+            {availableSettlements.map((settlement) => {
+              const fromUserId =
+                settlement.from_user ?? (settlement as any).from_user_id;
+              const toUserId =
+                settlement.to_user ?? (settlement as any).to_user_id;
+              const fromUserName =
+                settlement.from_user_details?.name ||
+                (settlement as any).from_user?.name ||
+                'Unknown';
+              const toUserName =
+                settlement.to_user_details?.name ||
+                (settlement as any).to_user?.name ||
+                'Unknown';
+              const settlementAmount =
+                (settlement.amount_cents ??
+                  Math.round(((settlement as any).amount ?? 0) * 100)) / 100;
+              const isUserPaying = fromUserId === user?.id;
+              let settlementTitle = `${fromUserName} owes you`;
+              if (isAdmin) {
+                settlementTitle = `${fromUserName} owes ${toUserName}`;
+              } else if (isUserPaying) {
+                settlementTitle = `You owe ${toUserName}`;
+              }
+
+              let settlementSubtitle = 'Tap to record payment received';
+              if (isAdmin) {
+                settlementSubtitle = 'Tap to record payment';
+              } else if (isUserPaying) {
+                settlementSubtitle = 'Tap to pay';
+              }
+
+              let amountColorClass = 'text-green-600';
+              if (isAdmin) {
+                amountColorClass = 'text-blue-600';
+              } else if (isUserPaying) {
+                amountColorClass = 'text-red-600';
+              }
+
+              const settlementKey = `${fromUserId || 'unknown-from'}-${
+                toUserId || 'unknown-to'
+              }-${Math.round(settlementAmount * 100)}`;
 
               return (
                 <TouchableOpacity
-                  key={index}
-                  onPress={() => setSelectedSettlement({
-                    from_user_id: settlement.from_user_id,
-                    to_user_id: settlement.to_user_id,
-                    maxAmount: settlement.amount,
-                    fromUserName: settlement.from_user?.name || 'Unknown',
-                    toUserName: settlement.to_user?.name || 'Unknown',
-                  })}
+                  key={settlementKey}
+                  onPress={() =>
+                    setSelectedSettlement({
+                      from_user_id: fromUserId || '',
+                      to_user_id: toUserId || '',
+                      maxAmount: settlementAmount,
+                      fromUserName,
+                      toUserName,
+                    })
+                  }
                   className={`rounded-lg border-2 p-4 ${
-                    selectedSettlement?.from_user_id === settlement.from_user_id &&
-                    selectedSettlement?.to_user_id === settlement.to_user_id
+                    selectedSettlement?.from_user_id === fromUserId &&
+                    selectedSettlement?.to_user_id === toUserId
                       ? 'border-blue-500 bg-blue-50'
                       : 'border-gray-200 bg-white'
                   }`}
                 >
                   <View className="flex-row items-center justify-between">
                     <View className="flex-1">
-                      {isAdmin ? (
-                        // Admin view - show all settlements
-                        <Text className="text-base font-medium text-gray-900">
-                          {settlement.from_user?.name} owes {settlement.to_user?.name}
-                        </Text>
-                      ) : (
-                        // Member view - show user-centric text
-                        isUserPaying ? (
-                          <Text className="text-base font-medium text-gray-900">
-                            You owe {settlement.to_user?.name}
-                          </Text>
-                        ) : (
-                          <Text className="text-base font-medium text-gray-900">
-                            {settlement.from_user?.name} owes you
-                          </Text>
-                        )
-                      )}
+                      <Text className="text-base font-medium text-gray-900">
+                        {settlementTitle}
+                      </Text>
                       <Text className="text-sm text-gray-500">
-                        {isAdmin
-                          ? 'Tap to record payment'
-                          : (isUserPaying ? 'Tap to pay' : 'Tap to record payment received')
-                        }
+                        {settlementSubtitle}
                       </Text>
                     </View>
-                    <Text className={`text-xl font-bold ${
-                      isAdmin
-                        ? 'text-blue-600'
-                        : (isUserPaying ? 'text-red-600' : 'text-green-600')
-                    }`}>
-                      ${settlement.amount.toFixed(2)}
+                    <Text className={`text-xl font-bold ${amountColorClass}`}>
+                      ${settlementAmount.toFixed(2)}
                     </Text>
                   </View>
                 </TouchableOpacity>
@@ -208,7 +250,8 @@ export default function SettleUpScreen() {
 
           <View className="mb-4 rounded-lg bg-gray-50 p-4">
             <Text className="text-base font-medium text-gray-900">
-              {selectedSettlement.fromUserName} → {selectedSettlement.toUserName}
+              {selectedSettlement.fromUserName} →{' '}
+              {selectedSettlement.toUserName}
             </Text>
             <Text className="text-sm text-gray-600">
               Maximum amount: ${selectedSettlement.maxAmount.toFixed(2)}
@@ -266,7 +309,9 @@ export default function SettleUpScreen() {
               }`}
             >
               <Text className="text-center font-semibold text-white">
-                {createSettlementMutation.isPending ? 'Recording...' : 'Record Payment'}
+                {createSettlementMutation.isPending
+                  ? 'Recording...'
+                  : 'Record Payment'}
               </Text>
             </TouchableOpacity>
           </View>

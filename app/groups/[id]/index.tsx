@@ -1,14 +1,23 @@
-import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
-import { Alert, ScrollView, Text, TouchableOpacity, View } from 'react-native';
-import { useState, useCallback } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
-
-import { useDeleteGroup, useGroup, useGroupDrafts, useGroupExpenses, useGroupBalances, useGroupSettlements, useUpdateExpense, useDeleteExpense, queryKeys } from '@/lib/api';
-import { ManageMembersModal } from '@/components/ManageMembersModal';
-import { ExpensesList } from '@/components/ExpensesList';
-import { ExpenseDetailModal } from '@/components/ExpenseDetailModal';
-import { AllExpensesModal } from '@/components/AllExpensesModal';
 import type { Expense } from '@shared/types';
+import { useQueryClient } from '@tanstack/react-query';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useState } from 'react';
+import { Alert, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+
+import { AllExpensesModal } from '@/components/AllExpensesModal';
+import { ExpenseDetailModal } from '@/components/ExpenseDetailModal';
+import { ExpensesList } from '@/components/ExpensesList';
+import { ManageMembersModal } from '@/components/ManageMembersModal';
+import {
+  queryKeys,
+  useDeleteExpense,
+  useDeleteGroup,
+  useGroup,
+  useGroupBalances,
+  useGroupDrafts,
+  useGroupExpenses,
+  useGroupSettlements,
+} from '@/lib/api';
 
 import { useAuth } from '../../_layout';
 
@@ -19,11 +28,15 @@ export default function GroupDetailsScreen() {
   const queryClient = useQueryClient();
   const { data: group, isLoading, error } = useGroup(groupId!);
   const { data: pendingDrafts } = useGroupDrafts(groupId!, 'pending_review');
-  const { data: expenses, isLoading: expensesLoading } = useGroupExpenses(groupId!);
-  const { data: balances, isLoading: balancesLoading } = useGroupBalances(groupId!);
-  const { data: settlements, isLoading: settlementsLoading } = useGroupSettlements(groupId!);
+  const { data: expenses, isLoading: expensesLoading } = useGroupExpenses(
+    groupId!,
+  );
+  const { data: balances, isLoading: balancesLoading } = useGroupBalances(
+    groupId!,
+  );
+  const { data: settlements, isLoading: settlementsLoading } =
+    useGroupSettlements(groupId!);
   const deleteGroupMutation = useDeleteGroup();
-  const updateExpenseMutation = useUpdateExpense();
   const deleteExpenseMutation = useDeleteExpense();
   const [showMembersModal, setShowMembersModal] = useState(false);
   const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
@@ -34,20 +47,38 @@ export default function GroupDetailsScreen() {
     useCallback(() => {
       if (groupId) {
         // Invalidate and refetch all group-related queries
-        queryClient.invalidateQueries({ queryKey: queryKeys.groupExpenses(groupId) });
-        queryClient.invalidateQueries({ queryKey: queryKeys.groupBalances(groupId) });
-        queryClient.invalidateQueries({ queryKey: queryKeys.groupSettlements(groupId) });
-        queryClient.invalidateQueries({ queryKey: queryKeys.groupSettlementRecords(groupId) });
-        queryClient.invalidateQueries({ queryKey: queryKeys.groupDrafts(groupId) });
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.groupExpenses(groupId),
+        });
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.groupBalances(groupId),
+        });
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.groupSettlements(groupId),
+        });
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.groupSettlementRecords(groupId),
+        });
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.groupDrafts(groupId),
+        });
         queryClient.invalidateQueries({ queryKey: queryKeys.group(groupId) });
 
         // Force refetch to ensure fresh data
-        queryClient.refetchQueries({ queryKey: queryKeys.groupExpenses(groupId) });
-        queryClient.refetchQueries({ queryKey: queryKeys.groupBalances(groupId) });
-        queryClient.refetchQueries({ queryKey: queryKeys.groupSettlements(groupId) });
-        queryClient.refetchQueries({ queryKey: queryKeys.groupSettlementRecords(groupId) });
+        queryClient.refetchQueries({
+          queryKey: queryKeys.groupExpenses(groupId),
+        });
+        queryClient.refetchQueries({
+          queryKey: queryKeys.groupBalances(groupId),
+        });
+        queryClient.refetchQueries({
+          queryKey: queryKeys.groupSettlements(groupId),
+        });
+        queryClient.refetchQueries({
+          queryKey: queryKeys.groupSettlementRecords(groupId),
+        });
       }
-    }, [groupId, queryClient])
+    }, [groupId, queryClient]),
   );
 
   const handleAddExpense = () => {
@@ -69,7 +100,7 @@ export default function GroupDetailsScreen() {
               Alert.alert('Success', 'Group deleted successfully', [
                 { text: 'OK', onPress: () => router.back() },
               ]);
-            } catch (error) {
+            } catch (caughtError) {
               Alert.alert('Error', 'Failed to delete group');
             }
           },
@@ -91,9 +122,316 @@ export default function GroupDetailsScreen() {
       });
       setSelectedExpense(null);
       Alert.alert('Success', 'Expense deleted successfully');
-    } catch (error) {
+    } catch (caughtError) {
       Alert.alert('Error', 'Failed to delete expense');
     }
+  };
+
+  const renderExpensesContent = (): JSX.Element | null => {
+    if (expensesLoading) {
+      return (
+        <View className="items-center py-8">
+          <Text className="text-gray-500">Loading expenses...</Text>
+        </View>
+      );
+    }
+
+    if (expenses && expenses.length > 0) {
+      return (
+        <View>
+          {/* Show available expenses up to 3 */}
+          <ExpensesList
+            expenses={expenses.slice(0, Math.min(expenses.length, 3))}
+            onExpensePress={(expense) => {
+              setSelectedExpense(expense);
+            }}
+            emptyMessage="No expenses in this group yet"
+          />
+          {/* Show "View All" button only if there are more than 3 expenses */}
+          {expenses.length > 3 && (
+            <View className="mt-4 items-center">
+              <TouchableOpacity
+                onPress={() => setShowAllExpensesModal(true)}
+                className="rounded-lg bg-blue-600 px-6 py-3"
+              >
+                <Text className="font-semibold text-white">
+                  View All {expenses.length} Expenses
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          {/* Show expense count for clarity */}
+          {expenses.length <= 3 && expenses.length > 1 && (
+            <View className="mt-2 items-center">
+              <Text className="text-xs text-gray-500">
+                Showing all {expenses.length} expenses
+              </Text>
+            </View>
+          )}
+        </View>
+      );
+    }
+
+    if (!expenses || expenses.length === 0) {
+      return (
+        <View className="items-center py-8">
+          <Text className="mb-4 text-center text-gray-500">
+            No expenses yet. Add your first expense to get started!
+          </Text>
+          <TouchableOpacity
+            onPress={handleAddExpense}
+            className="rounded-lg border border-blue-600 px-6 py-3"
+          >
+            <Text className="font-semibold text-blue-600">
+              Add First Expense
+            </Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+
+    return null;
+  };
+
+  const renderBalancesContent = (): JSX.Element | null => {
+    if (balancesLoading || settlementsLoading) {
+      return (
+        <View className="items-center py-8">
+          <Text className="text-gray-500">Loading balances...</Text>
+        </View>
+      );
+    }
+
+    if (settlements && settlements.length > 0) {
+      return (
+        <View className="space-y-6">
+          {/* Individual Member Breakdown */}
+          <View className="space-y-4">
+            <Text className="text-lg font-semibold text-gray-900">
+              💰 Individual Balances
+            </Text>
+
+            {balances &&
+              balances
+                .map((balance) => ({
+                  ...balance,
+                  balanceValue:
+                    balance.net_cents !== undefined
+                      ? balance.net_cents / 100
+                      : balance.balance || 0,
+                }))
+                .filter((balance) => Math.abs(balance.balanceValue) > 0.01)
+                .map((balance) => {
+                  const isOwed = balance.balanceValue > 0;
+                  const amount = Math.abs(balance.balanceValue);
+
+                  const owesToThisPerson = settlements.filter(
+                    (settlement) =>
+                      (settlement.to_user || (settlement as any).to_user_id) ===
+                      balance.user_id,
+                  );
+                  const thisPersonOwes = settlements.filter(
+                    (settlement) =>
+                      (settlement.from_user ||
+                        (settlement as any).from_user_id) === balance.user_id,
+                  );
+
+                  return (
+                    <View
+                      key={balance.user_id}
+                      className={`rounded-lg border-2 p-4 ${
+                        isOwed
+                          ? 'border-green-200 bg-green-50'
+                          : 'border-red-200 bg-red-50'
+                      }`}
+                    >
+                      <View className="mb-3 flex-row items-center justify-between">
+                        <Text className="text-lg font-bold text-gray-900">
+                          {balance.user?.name || 'Unknown User'}
+                        </Text>
+                        <Text
+                          className={`text-xl font-bold ${
+                            isOwed ? 'text-green-700' : 'text-red-700'
+                          }`}
+                        >
+                          {isOwed ? '+' : '-'}${amount.toFixed(2)}
+                        </Text>
+                      </View>
+
+                      {/* Show who owes this person money */}
+                      {isOwed && owesToThisPerson.length > 0 && (
+                        <View className="space-y-2">
+                          <Text className="font-semibold text-green-800">
+                            💵 Gets money from:
+                          </Text>
+                          {owesToThisPerson.map((settlement) => {
+                            const fromId =
+                              settlement.from_user ||
+                              (settlement as any).from_user_id ||
+                              'unknown-from';
+                            const toId =
+                              settlement.to_user ||
+                              (settlement as any).to_user_id ||
+                              'unknown-to';
+                            const amountKey =
+                              settlement.amount_cents ??
+                              (settlement as any).amount ??
+                              0;
+                            const settlementKey = `${fromId}-${toId}-${amountKey}-incoming`;
+
+                            return (
+                              <View
+                                key={settlementKey}
+                                className="flex-row items-center justify-between rounded-md bg-white p-3"
+                              >
+                                <Text className="text-gray-900">
+                                  📤{' '}
+                                  {settlement.from_user_details?.name ||
+                                    (settlement as any).from_user?.name ||
+                                    'Unknown'}
+                                </Text>
+                                <Text className="font-semibold text-green-700">
+                                  $
+                                  {(
+                                    (settlement.amount_cents ??
+                                      (settlement as any).amount ??
+                                      0) / 100
+                                  ).toFixed(2)}
+                                </Text>
+                              </View>
+                            );
+                          })}
+                        </View>
+                      )}
+
+                      {/* Show who this person owes money to */}
+                      {!isOwed && thisPersonOwes.length > 0 && (
+                        <View className="space-y-2">
+                          <Text className="font-semibold text-red-800">
+                            💸 Owes money to:
+                          </Text>
+                          {thisPersonOwes.map((settlement) => {
+                            const fromId =
+                              settlement.from_user ||
+                              (settlement as any).from_user_id ||
+                              'unknown-from';
+                            const toId =
+                              settlement.to_user ||
+                              (settlement as any).to_user_id ||
+                              'unknown-to';
+                            const amountKey =
+                              settlement.amount_cents ??
+                              (settlement as any).amount ??
+                              0;
+                            const settlementKey = `${fromId}-${toId}-${amountKey}-outgoing`;
+
+                            return (
+                              <View
+                                key={settlementKey}
+                                className="flex-row items-center justify-between rounded-md bg-white p-3"
+                              >
+                                <Text className="text-gray-900">
+                                  📥{' '}
+                                  {settlement.to_user_details?.name ||
+                                    (settlement as any).to_user?.name ||
+                                    'Unknown'}
+                                </Text>
+                                <Text className="font-semibold text-red-700">
+                                  $
+                                  {(
+                                    (settlement.amount_cents ??
+                                      (settlement as any).amount ??
+                                      0) / 100
+                                  ).toFixed(2)}
+                                </Text>
+                              </View>
+                            );
+                          })}
+                        </View>
+                      )}
+                    </View>
+                  );
+                })}
+          </View>
+
+          {/* Quick Settlement Guide */}
+          <View className="rounded-lg border-2 border-blue-200 bg-blue-50 p-4">
+            <Text className="mb-3 text-lg font-semibold text-blue-900">
+              ⚡ Quick Settlement Guide
+            </Text>
+            <Text className="mb-3 text-sm text-blue-700">
+              Complete these payments to settle all debts:
+            </Text>
+
+            <View className="space-y-2">
+              {settlements.map((settlement) => {
+                const fromId =
+                  settlement.from_user ||
+                  (settlement as any).from_user_id ||
+                  'unknown-from';
+                const toId =
+                  settlement.to_user ||
+                  (settlement as any).to_user_id ||
+                  'unknown-to';
+                const amountKey =
+                  settlement.amount_cents ?? (settlement as any).amount ?? 0;
+                const settlementKey = `${fromId}-${toId}-${amountKey}-summary`;
+
+                return (
+                  <View
+                    key={settlementKey}
+                    className="flex-row items-center justify-between rounded-md bg-white p-3"
+                  >
+                    <View className="flex-1">
+                      <Text className="font-medium text-gray-900">
+                        {settlement.from_user_details?.name ||
+                          (settlement as any).from_user?.name ||
+                          'Unknown'}{' '}
+                        →{' '}
+                        {settlement.to_user_details?.name ||
+                          (settlement as any).to_user?.name ||
+                          'Unknown'}
+                      </Text>
+                    </View>
+                    <Text className="font-bold text-blue-700">
+                      $
+                      {(
+                        (settlement.amount_cents ??
+                          (settlement as any).amount ??
+                          0) / 100
+                      ).toFixed(2)}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+        </View>
+      );
+    }
+
+    if (
+      balances &&
+      balances.every((balance) => {
+        const value =
+          balance.net_cents !== undefined
+            ? balance.net_cents / 100
+            : balance.balance || 0;
+        return Math.abs(value) < 0.01;
+      })
+    ) {
+      return (
+        <View className="items-center py-8">
+          <Text className="text-center text-gray-500">All settled up! 🎉</Text>
+        </View>
+      );
+    }
+
+    return (
+      <View className="items-center py-8">
+        <Text className="text-center text-gray-500">No balances to show</Text>
+      </View>
+    );
   };
 
   if (isLoading) {
@@ -129,7 +467,10 @@ export default function GroupDetailsScreen() {
         </Text>
         <Text className="text-gray-600">Currency: {group.currency_code}</Text>
         <Text className="text-gray-600">
-          Created: {new Date(group.created_at).toLocaleDateString()}
+          Created:{' '}
+          {group.created_at
+            ? new Date(group.created_at).toLocaleDateString()
+            : 'Unknown'}
         </Text>
         <Text className="text-gray-600">
           Members: {group.members?.length || 0}
@@ -223,59 +564,7 @@ export default function GroupDetailsScreen() {
           </View>
         </View>
 
-        <View className="px-6 py-4">
-          {expensesLoading ? (
-            <View className="items-center py-8">
-              <Text className="text-gray-500">Loading expenses...</Text>
-            </View>
-          ) : expenses && expenses.length > 0 ? (
-            <View>
-              {/* Show available expenses up to 3 */}
-              <ExpensesList
-                expenses={expenses.slice(0, Math.min(expenses.length, 3))}
-                onExpensePress={(expense) => {
-                  setSelectedExpense(expense);
-                }}
-                emptyMessage="No expenses in this group yet"
-              />
-              {/* Show "View All" button only if there are more than 3 expenses */}
-              {expenses.length > 3 && (
-                <View className="mt-4 items-center">
-                  <TouchableOpacity
-                    onPress={() => setShowAllExpensesModal(true)}
-                    className="rounded-lg bg-blue-600 px-6 py-3"
-                  >
-                    <Text className="font-semibold text-white">
-                      View All {expenses.length} Expenses
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-              {/* Show expense count for clarity */}
-              {expenses.length <= 3 && expenses.length > 1 && (
-                <View className="mt-2 items-center">
-                  <Text className="text-xs text-gray-500">
-                    Showing all {expenses.length} expenses
-                  </Text>
-                </View>
-              )}
-            </View>
-          ) : !expensesLoading && (!expenses || expenses.length === 0) ? (
-            <View className="items-center py-8">
-              <Text className="mb-4 text-center text-gray-500">
-                No expenses yet. Add your first expense to get started!
-              </Text>
-              <TouchableOpacity
-                onPress={handleAddExpense}
-                className="rounded-lg border border-blue-600 px-6 py-3"
-              >
-                <Text className="font-semibold text-blue-600">
-                  Add First Expense
-                </Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
-        </View>
+        <View className="px-6 py-4">{renderExpensesContent()}</View>
       </View>
 
       {/* Balances Section */}
@@ -284,134 +573,7 @@ export default function GroupDetailsScreen() {
           Balances
         </Text>
 
-        {balancesLoading || settlementsLoading ? (
-          <View className="items-center py-8">
-            <Text className="text-gray-500">Loading balances...</Text>
-          </View>
-        ) : settlements && settlements.length > 0 ? (
-          <View className="space-y-6">
-            {/* Individual Member Breakdown */}
-            <View className="space-y-4">
-              <Text className="text-lg font-semibold text-gray-900">
-                💰 Individual Balances
-              </Text>
-
-              {balances &&
-                balances
-                  .filter((balance) => Math.abs(balance.balance) > 0.01)
-                  .map((balance) => {
-                    const isOwed = balance.balance > 0;
-                    const amount = Math.abs(balance.balance);
-
-                    // Find settlements involving this user
-                    const owesToThisPerson = settlements.filter(s => s.to_user_id === balance.user_id);
-                    const thisPersonOwes = settlements.filter(s => s.from_user_id === balance.user_id);
-
-                    return (
-                      <View
-                        key={balance.user_id}
-                        className={`rounded-lg border-2 p-4 ${
-                          isOwed ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'
-                        }`}
-                      >
-                        <View className="mb-3 flex-row items-center justify-between">
-                          <Text className="text-lg font-bold text-gray-900">
-                            {balance.user?.name || 'Unknown User'}
-                          </Text>
-                          <Text
-                            className={`text-xl font-bold ${
-                              isOwed ? 'text-green-700' : 'text-red-700'
-                            }`}
-                          >
-                            {isOwed ? '+' : '-'}${amount.toFixed(2)}
-                          </Text>
-                        </View>
-
-                        {/* Show who owes this person money */}
-                        {isOwed && owesToThisPerson.length > 0 && (
-                          <View className="space-y-2">
-                            <Text className="font-semibold text-green-800">
-                              💵 Gets money from:
-                            </Text>
-                            {owesToThisPerson.map((settlement, index) => (
-                              <View
-                                key={index}
-                                className="flex-row items-center justify-between rounded-md bg-white p-3"
-                              >
-                                <Text className="text-gray-900">
-                                  📤 {settlement.from_user?.name}
-                                </Text>
-                                <Text className="font-semibold text-green-700">
-                                  ${settlement.amount.toFixed(2)}
-                                </Text>
-                              </View>
-                            ))}
-                          </View>
-                        )}
-
-                        {/* Show who this person owes money to */}
-                        {!isOwed && thisPersonOwes.length > 0 && (
-                          <View className="space-y-2">
-                            <Text className="font-semibold text-red-800">
-                              💸 Owes money to:
-                            </Text>
-                            {thisPersonOwes.map((settlement, index) => (
-                              <View
-                                key={index}
-                                className="flex-row items-center justify-between rounded-md bg-white p-3"
-                              >
-                                <Text className="text-gray-900">
-                                  📥 {settlement.to_user?.name}
-                                </Text>
-                                <Text className="font-semibold text-red-700">
-                                  ${settlement.amount.toFixed(2)}
-                                </Text>
-                              </View>
-                            ))}
-                          </View>
-                        )}
-                      </View>
-                    );
-                  })}
-            </View>
-
-            {/* Quick Settlement Guide */}
-            <View className="rounded-lg border-2 border-blue-200 bg-blue-50 p-4">
-              <Text className="mb-3 text-lg font-semibold text-blue-900">
-                ⚡ Quick Settlement Guide
-              </Text>
-              <Text className="mb-3 text-sm text-blue-700">
-                Complete these payments to settle all debts:
-              </Text>
-
-              <View className="space-y-2">
-                {settlements.map((settlement, index) => (
-                  <View
-                    key={index}
-                    className="flex-row items-center justify-between rounded-md bg-white p-3"
-                  >
-                    <View className="flex-1">
-                      <Text className="font-medium text-gray-900">
-                        {settlement.from_user?.name} → {settlement.to_user?.name}
-                      </Text>
-                    </View>
-                    <Text className="font-bold text-blue-700">
-                      ${settlement.amount.toFixed(2)}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            </View>
-          </View>
-        ) : balances && balances.every((balance) => Math.abs(balance.balance) < 0.01) ? (
-          <View className="items-center py-8">
-            <Text className="text-center text-gray-500">All settled up! 🎉</Text>
-          </View>
-        ) : (
-          <View className="items-center py-8">
-            <Text className="text-center text-gray-500">No balances to show</Text>
-          </View>
-        )}
+        {renderBalancesContent()}
       </View>
 
       {/* Danger Zone */}
@@ -459,8 +621,11 @@ export default function GroupDetailsScreen() {
         onClose={() => setSelectedExpense(null)}
         onEdit={handleEditExpense}
         onDelete={handleDeleteExpense}
-        canEdit={true}
-        canDelete={selectedExpense?.paid_by === user?.id || group?.created_by === user?.id}
+        canEdit
+        canDelete={
+          selectedExpense?.paid_by === user?.id ||
+          group?.created_by === user?.id
+        }
       />
 
       {/* All Expenses Modal */}

@@ -2,12 +2,11 @@ import { Ionicons } from '@expo/vector-icons';
 import type {
   CreateDraftRequest,
   CreateExpenseRequest,
-  UpdateExpenseRequest,
   SplitType,
-  Expense,
+  UpdateExpenseRequest,
 } from '@shared/types';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -19,8 +18,14 @@ import {
   View,
 } from 'react-native';
 
-import { useCreateDraft, useCreateExpense, useUpdateExpense, useGroup, useExpense } from '@/lib/api';
 import { MemberSelectionModal } from '@/components/MemberSelectionModal';
+import {
+  useCreateDraft,
+  useCreateExpense,
+  useExpense,
+  useGroup,
+  useUpdateExpense,
+} from '@/lib/api';
 
 import { useAuth } from '../../_layout';
 
@@ -45,12 +50,17 @@ const SPLIT_TYPES: { value: SplitType; label: string; description: string }[] =
 
 export default function AddExpenseScreen() {
   const router = useRouter();
-  const { id: groupId, editId } = useLocalSearchParams<{ id: string; editId?: string }>();
+  const { id: groupId, editId } = useLocalSearchParams<{
+    id: string;
+    editId?: string;
+  }>();
   const { user } = useAuth();
   const isEditMode = !!editId;
 
   const { data: group, isLoading: groupLoading } = useGroup(groupId!);
-  const { data: existingExpense, isLoading: expenseLoading } = useExpense(editId || '');
+  const { data: existingExpense, isLoading: expenseLoading } = useExpense(
+    editId || '',
+  );
   const createExpenseMutation = useCreateExpense();
   const updateExpenseMutation = useUpdateExpense();
   const createDraftMutation = useCreateDraft();
@@ -68,48 +78,63 @@ export default function AddExpenseScreen() {
   const [isParsingMode, setIsParsingMode] = useState(false);
   const [isParsing, setIsParsing] = useState(false);
   const [showMemberSelection, setShowMemberSelection] = useState(false);
-  const [memberAmounts, setMemberAmounts] = useState<Record<string, string>>({});
+  const [memberAmounts, setMemberAmounts] = useState<Record<string, string>>(
+    {},
+  );
   const [memberShares, setMemberShares] = useState<Record<string, string>>({});
 
   // Pre-fill form data when editing an existing expense
   useEffect(() => {
     if (isEditMode && existingExpense) {
+      const existingExpenseAmountCents =
+        existingExpense.amount_cents ??
+        Math.round((existingExpense.amount ?? 0) * 100);
+      const amountDollars = existingExpenseAmountCents / 100;
+
+      let uiSplitType: SplitType;
+      if (existingExpense.split_type === 'amount') {
+        uiSplitType = 'exact';
+      } else if (existingExpense.split_type === 'share') {
+        uiSplitType = 'percentage';
+      } else {
+        uiSplitType = existingExpense.split_type;
+      }
+
       setFormData({
-        title: existingExpense.description || '',
-        amount: existingExpense.amount.toString(),
+        title: existingExpense.title || existingExpense.description || '',
+        amount: amountDollars.toString(),
         description: existingExpense.description || '',
-        splitType: existingExpense.split_type,
+        splitType: uiSplitType,
         paidBy: existingExpense.paid_by,
       });
-      setAmountCents(Math.round(existingExpense.amount * 100));
+      setAmountCents(existingExpenseAmountCents);
 
-      // Pre-fill member amounts for exact split
-      if (existingExpense.split_type === 'exact') {
+      if (uiSplitType === 'exact') {
         if (existingExpense.member_amounts) {
-          // Use stored original amounts if available
           setMemberAmounts(existingExpense.member_amounts);
         } else if (existingExpense.splits) {
-          // Fallback to using split amounts (for backward compatibility)
           const amounts: Record<string, string> = {};
-          existingExpense.splits.forEach(split => {
-            amounts[split.user_id] = split.amount.toString();
+          existingExpense.splits.forEach((split) => {
+            const splitAmountCents =
+              split.amount_cents ?? Math.round((split.amount ?? 0) * 100);
+            amounts[split.user_id] = (splitAmountCents / 100).toString();
           });
           setMemberAmounts(amounts);
         }
       }
 
-      // Pre-fill member shares for percentage split
-      if (existingExpense.split_type === 'percentage') {
+      if (uiSplitType === 'percentage') {
         if (existingExpense.member_shares) {
-          // Use stored original shares if available
           setMemberShares(existingExpense.member_shares);
         } else if (existingExpense.splits) {
-          // Fallback to calculating shares from splits (for backward compatibility)
           const shares: Record<string, string> = {};
-          const totalAmount = existingExpense.amount;
-          existingExpense.splits.forEach(split => {
-            // Calculate shares based on proportion of amount
-            const sharePercentage = (split.amount / totalAmount) * 100;
+          existingExpense.splits.forEach((split) => {
+            const splitAmountCents =
+              split.amount_cents ?? Math.round((split.amount ?? 0) * 100);
+            const sharePercentage =
+              existingExpenseAmountCents > 0
+                ? (splitAmountCents / existingExpenseAmountCents) * 100
+                : 0;
             shares[split.user_id] = Math.round(sharePercentage).toString();
           });
           setMemberShares(shares);
@@ -141,7 +166,7 @@ export default function AddExpenseScreen() {
       return 'You';
     }
 
-    const member = group?.members?.find(m => m.user_id === formData.paidBy);
+    const member = group?.members?.find((m) => m.user_id === formData.paidBy);
     return member?.user?.name || member?.user?.email || 'Unknown Member';
   };
 
@@ -151,11 +176,12 @@ export default function AddExpenseScreen() {
 
     // Prevent multiple decimal points
     const parts = cleaned.split('.');
-    const formatted = parts.length > 2 ? `${parts[0]}.${parts.slice(1).join('')}` : cleaned;
+    const formatted =
+      parts.length > 2 ? `${parts[0]}.${parts.slice(1).join('')}` : cleaned;
 
-    setMemberAmounts(prev => ({
+    setMemberAmounts((prev) => ({
       ...prev,
-      [userId]: formatted
+      [userId]: formatted,
     }));
   };
 
@@ -176,22 +202,22 @@ export default function AddExpenseScreen() {
     // Allow only whole numbers for shares
     const cleaned = text.replace(/[^0-9]/g, '');
 
-    setMemberShares(prev => ({
+    setMemberShares((prev) => ({
       ...prev,
-      [userId]: cleaned
+      [userId]: cleaned,
     }));
   };
 
   const calculateTotalShares = () => {
     const total = Object.values(memberShares).reduce((sum, shares) => {
-      return sum + (parseInt(shares) || 0);
+      return sum + (parseInt(shares, 10) || 0);
     }, 0);
     return total;
   };
 
   const calculateAmountFromShares = (userId: string) => {
     const totalAmount = parseFloat(formData.amount) || 0;
-    const userShares = parseInt(memberShares[userId]) || 0;
+    const userShares = parseInt(memberShares[userId] ?? '0', 10) || 0;
     const totalShares = calculateTotalShares();
 
     if (totalShares === 0) return 0;
@@ -226,9 +252,9 @@ export default function AddExpenseScreen() {
       }
 
       // Auto-fill empty amounts with $0 and validate
-      const hasInvalidAmounts = group?.members?.some(member => {
+      const hasInvalidAmounts = group?.members?.some((member) => {
         const amount = memberAmounts[member.user_id] || '0';
-        return isNaN(parseFloat(amount));
+        return Number.isNaN(parseFloat(amount));
       });
 
       if (hasInvalidAmounts) {
@@ -238,8 +264,11 @@ export default function AddExpenseScreen() {
 
       // Auto-fill any missing amounts with 0
       const updatedMemberAmounts = { ...memberAmounts };
-      group?.members?.forEach(member => {
-        if (!updatedMemberAmounts[member.user_id] || updatedMemberAmounts[member.user_id] === '') {
+      group?.members?.forEach((member) => {
+        if (
+          !updatedMemberAmounts[member.user_id] ||
+          updatedMemberAmounts[member.user_id] === ''
+        ) {
           updatedMemberAmounts[member.user_id] = '0';
         }
       });
@@ -253,14 +282,17 @@ export default function AddExpenseScreen() {
 
       const totalShares = calculateTotalShares();
       if (totalShares <= 0) {
-        Alert.alert('Error', 'Please enter valid shares for at least one member');
+        Alert.alert(
+          'Error',
+          'Please enter valid shares for at least one member',
+        );
         return;
       }
 
       // Auto-fill empty shares with 0 and validate
-      const hasInvalidShares = group?.members?.some(member => {
+      const hasInvalidShares = group?.members?.some((member) => {
         const shares = memberShares[member.user_id] || '0';
-        return isNaN(parseInt(shares));
+        return Number.isNaN(parseInt(shares, 10));
       });
 
       if (hasInvalidShares) {
@@ -270,17 +302,18 @@ export default function AddExpenseScreen() {
 
       // Auto-fill any missing shares with 0
       const updatedMemberShares = { ...memberShares };
-      group?.members?.forEach(member => {
-        if (!updatedMemberShares[member.user_id] || updatedMemberShares[member.user_id] === '') {
+      group?.members?.forEach((member) => {
+        if (
+          !updatedMemberShares[member.user_id] ||
+          updatedMemberShares[member.user_id] === ''
+        ) {
           updatedMemberShares[member.user_id] = '0';
         }
       });
       setMemberShares(updatedMemberShares);
-    } else {
-      if (finalAmountCents <= 0) {
-        Alert.alert('Error', 'Please enter a valid amount');
-        return;
-      }
+    } else if (finalAmountCents <= 0) {
+      Alert.alert('Error', 'Please enter a valid amount');
+      return;
     }
 
     if (!formData.paidBy) {
@@ -304,12 +337,12 @@ export default function AddExpenseScreen() {
           split_type: formData.splitType,
           // Add member splits for exact split type
           ...(formData.splitType === 'exact' && {
-            member_amounts: memberAmounts
+            member_amounts: memberAmounts,
           }),
           // Add member shares for shares split type
           ...(formData.splitType === 'percentage' && {
-            member_shares: memberShares
-          })
+            member_shares: memberShares,
+          }),
         };
 
         await updateExpenseMutation.mutateAsync({
@@ -334,12 +367,12 @@ export default function AddExpenseScreen() {
           split_type: formData.splitType,
           // Add member splits for exact split type
           ...(formData.splitType === 'exact' && {
-            member_amounts: memberAmounts
+            member_amounts: memberAmounts,
           }),
           // Add member shares for shares split type
           ...(formData.splitType === 'percentage' && {
-            member_shares: memberShares
-          })
+            member_shares: memberShares,
+          }),
         };
 
         await createExpenseMutation.mutateAsync({
@@ -354,9 +387,12 @@ export default function AddExpenseScreen() {
         }, 100);
       }
     } catch (error) {
+      const actionVerb = isEditMode ? 'update' : 'add';
       Alert.alert(
         'Error',
-        error instanceof Error ? error.message : `Failed to ${isEditMode ? 'update' : 'add'} expense`,
+        error instanceof Error
+          ? error.message
+          : `Failed to ${actionVerb} expense`,
       );
     }
   };
@@ -391,18 +427,31 @@ export default function AddExpenseScreen() {
     try {
       // For now, create a simple draft based on the natural language input
       // In a real implementation, this would call the MCP server to parse the expense
+      const draftTotalCents = amountCents > 0 ? amountCents : 1000; // Default $10
+      const draftSplits = group?.members?.map((member) => ({
+        user_id: member.user_id,
+        amount_cents: Math.round(
+          draftTotalCents / (group?.members?.length || 1),
+        ),
+      })) || [
+        {
+          user_id: user?.id || '',
+          amount_cents: draftTotalCents,
+        },
+      ];
+
       const draftData: CreateDraftRequest = {
+        title: naturalLanguageInput.trim(),
         description: naturalLanguageInput.trim(),
-        amount: amountCents > 0 ? amountCents / 100 : 10, // Default $10 if no amount parsed
+        amount_cents: draftTotalCents,
+        amount: draftTotalCents / 100,
         paid_by: user?.id || '',
         split_type: 'equal',
-        splits: group?.members?.map((m) => ({
-          user_id: m.user_id,
-          amount: (amountCents > 0 ? amountCents / 100 : 10) / (group?.members?.length || 1)
-        })) || [{
-          user_id: user?.id || '',
-          amount: amountCents > 0 ? amountCents / 100 : 10
-        }]
+        participants: group?.members?.map((member) => member.user_id) || [
+          user?.id || '',
+        ],
+        source: 'manual',
+        splits: draftSplits,
       };
 
       if (!groupId) {
@@ -435,10 +484,38 @@ export default function AddExpenseScreen() {
     }
   };
 
+  const isAnyMutationPending =
+    createExpenseMutation.isPending ||
+    updateExpenseMutation.isPending ||
+    createDraftMutation.isPending ||
+    isParsing;
+
+  let primaryButtonColorClass = 'bg-blue-600';
+  if (isAnyMutationPending) {
+    primaryButtonColorClass = 'bg-gray-400';
+  } else if (isParsingMode) {
+    primaryButtonColorClass = 'bg-purple-600';
+  }
+
+  let primaryButtonLabel = isEditMode ? 'Update Expense' : 'Add Expense';
+  if (isParsing) {
+    primaryButtonLabel = '🤖 Parsing...';
+  } else if (createDraftMutation.isPending) {
+    primaryButtonLabel = 'Creating Draft...';
+  } else if (createExpenseMutation.isPending) {
+    primaryButtonLabel = 'Adding...';
+  } else if (updateExpenseMutation.isPending) {
+    primaryButtonLabel = 'Updating...';
+  } else if (isParsingMode) {
+    primaryButtonLabel = '🤖 Parse & Create Draft';
+  }
+
   if (groupLoading || (isEditMode && expenseLoading)) {
     return (
       <View className="flex-1 items-center justify-center bg-white">
-        <Text className="text-gray-600">{isEditMode ? 'Loading expense...' : 'Loading group...'}</Text>
+        <Text className="text-gray-600">
+          {isEditMode ? 'Loading expense...' : 'Loading group...'}
+        </Text>
       </View>
     );
   }
@@ -513,8 +590,8 @@ export default function AddExpenseScreen() {
                 🤖 Describe your expense naturally
               </Text>
               <Text className="mb-3 text-sm text-gray-600">
-                Example: "I paid $45 for dinner at Mario's, split equally
-                between Alice, Bob, and me"
+                Example: I paid $45 for dinner at Mario&apos;s, split equally
+                between Alice, Bob, and me
               </Text>
               <TextInput
                 value={naturalLanguageInput}
@@ -594,13 +671,19 @@ export default function AddExpenseScreen() {
                   onPress={() => setShowMemberSelection(true)}
                 >
                   <View className="flex-row items-center justify-between">
-                    <Text className={`text-base ${
-                      formData.paidBy ? 'text-gray-900' : 'text-gray-500'
-                    }`}>
+                    <Text
+                      className={`text-base ${
+                        formData.paidBy ? 'text-gray-900' : 'text-gray-500'
+                      }`}
+                    >
                       {getSelectedMemberName()}
                     </Text>
                     <View className="ml-2">
-                      <Ionicons name="chevron-forward" size={20} color="#9ca3af" />
+                      <Ionicons
+                        name="chevron-forward"
+                        size={20}
+                        color="#9ca3af"
+                      />
                     </View>
                   </View>
                 </TouchableOpacity>
@@ -658,7 +741,8 @@ export default function AddExpenseScreen() {
                     Amount for each member
                   </Text>
                   <Text className="mb-4 text-sm text-gray-600">
-                    Enter the exact amount each person owes for this expense (leave blank or enter $0.00 if someone owes nothing)
+                    Enter the exact amount each person owes for this expense
+                    (leave blank or enter $0.00 if someone owes nothing)
                   </Text>
 
                   {group.members.map((member) => (
@@ -666,16 +750,23 @@ export default function AddExpenseScreen() {
                       <Text className="mb-2 text-base font-medium text-gray-900">
                         {getMemberDisplayName(member)}
                         {member.user?.email && (
-                          <Text className="text-sm text-gray-600"> ({member.user.email})</Text>
+                          <Text className="text-sm text-gray-600">
+                            {' '}
+                            ({member.user.email})
+                          </Text>
                         )}
                       </Text>
                       <View className="flex-row items-center">
                         <Text className="mr-2 text-xl font-bold text-gray-900">
-                          {group.currency_code === 'USD' ? '$' : group.currency_code}
+                          {group.currency_code === 'USD'
+                            ? '$'
+                            : group.currency_code}
                         </Text>
                         <TextInput
                           value={memberAmounts[member.user_id] || ''}
-                          onChangeText={(text) => handleMemberAmountChange(member.user_id, text)}
+                          onChangeText={(text) =>
+                            handleMemberAmountChange(member.user_id, text)
+                          }
                           placeholder="0.00"
                           keyboardType="decimal-pad"
                           className="flex-1 rounded-lg border border-gray-300 bg-white px-4 py-3 text-base"
@@ -685,50 +776,69 @@ export default function AddExpenseScreen() {
                   ))}
 
                   {/* Remaining amount display */}
-                  {parseFloat(formData.amount) > 0 && (
-                    <View className={`mt-4 rounded-lg p-3 ${
-                      Math.abs(calculateRemainingAmount()) < 0.01
-                        ? 'bg-green-50'
-                        : calculateRemainingAmount() < 0
-                          ? 'bg-red-50'
-                          : 'bg-yellow-50'
-                    }`}>
-                      <View className="flex-row items-center justify-between">
-                        <Text className={`text-base font-medium ${
-                          Math.abs(calculateRemainingAmount()) < 0.01
-                            ? 'text-green-800'
-                            : calculateRemainingAmount() < 0
-                              ? 'text-red-800'
-                              : 'text-yellow-800'
-                        }`}>
-                          Remaining amount:
-                        </Text>
-                        <Text className={`text-lg font-bold ${
-                          Math.abs(calculateRemainingAmount()) < 0.01
-                            ? 'text-green-800'
-                            : calculateRemainingAmount() < 0
-                              ? 'text-red-800'
-                              : 'text-yellow-800'
-                        }`}>
-                          {group.currency_code === 'USD' ? '$' : group.currency_code}
-                          {calculateRemainingAmount().toFixed(2)}
-                        </Text>
-                      </View>
-                      <Text className={`mt-1 text-sm ${
-                        Math.abs(calculateRemainingAmount()) < 0.01
-                          ? 'text-green-700'
-                          : calculateRemainingAmount() < 0
-                            ? 'text-red-700'
-                            : 'text-yellow-700'
-                      }`}>
-                        {Math.abs(calculateRemainingAmount()) < 0.01
-                          ? '✅ Amounts match perfectly!'
-                          : calculateRemainingAmount() < 0
-                            ? '⚠️ Member amounts exceed total expense'
-                            : '💰 Amount still needs to be allocated'}
-                      </Text>
-                    </View>
-                  )}
+                  {parseFloat(formData.amount) > 0 &&
+                    (() => {
+                      const remaining = calculateRemainingAmount();
+                      const isMatching = Math.abs(remaining) < 0.01;
+                      const isExceeding = remaining < 0;
+                      let bgColor;
+                      if (isMatching) {
+                        bgColor = 'bg-green-50';
+                      } else if (isExceeding) {
+                        bgColor = 'bg-red-50';
+                      } else {
+                        bgColor = 'bg-yellow-50';
+                      }
+
+                      let textColor;
+                      if (isMatching) {
+                        textColor = 'text-green-800';
+                      } else if (isExceeding) {
+                        textColor = 'text-red-800';
+                      } else {
+                        textColor = 'text-yellow-800';
+                      }
+
+                      let subTextColor;
+                      if (isMatching) {
+                        subTextColor = 'text-green-700';
+                      } else if (isExceeding) {
+                        subTextColor = 'text-red-700';
+                      } else {
+                        subTextColor = 'text-yellow-700';
+                      }
+
+                      let statusMessage;
+                      if (isMatching) {
+                        statusMessage = '✅ Amounts match perfectly!';
+                      } else if (isExceeding) {
+                        statusMessage =
+                          '⚠️ Member amounts exceed total expense';
+                      } else {
+                        statusMessage = '💰 Amount still needs to be allocated';
+                      }
+
+                      return (
+                        <View className={`mt-4 rounded-lg p-3 ${bgColor}`}>
+                          <View className="flex-row items-center justify-between">
+                            <Text
+                              className={`text-base font-medium ${textColor}`}
+                            >
+                              Remaining amount:
+                            </Text>
+                            <Text className={`text-lg font-bold ${textColor}`}>
+                              {group.currency_code === 'USD'
+                                ? '$'
+                                : group.currency_code}
+                              {remaining.toFixed(2)}
+                            </Text>
+                          </View>
+                          <Text className={`mt-1 text-sm ${subTextColor}`}>
+                            {statusMessage}
+                          </Text>
+                        </View>
+                      );
+                    })()}
                 </View>
               )}
 
@@ -739,7 +849,9 @@ export default function AddExpenseScreen() {
                     Shares for each member
                   </Text>
                   <Text className="mb-4 text-sm text-gray-600">
-                    Enter the number of shares for each person. The total amount will be divided proportionally. (leave blank or enter 0 if someone gets no shares)
+                    Enter the number of shares for each person. The total amount
+                    will be divided proportionally. (leave blank or enter 0 if
+                    someone gets no shares)
                   </Text>
 
                   {group.members.map((member) => (
@@ -748,46 +860,70 @@ export default function AddExpenseScreen() {
                         <Text className="text-base font-medium text-gray-900">
                           {getMemberDisplayName(member)}
                           {member.user?.email && (
-                            <Text className="text-sm text-gray-600"> ({member.user.email})</Text>
+                            <Text className="text-sm text-gray-600">
+                              {' '}
+                              ({member.user.email})
+                            </Text>
                           )}
                         </Text>
-                        {parseFloat(formData.amount) > 0 && calculateTotalShares() > 0 && (
-                          <Text className="text-sm font-medium text-blue-600">
-                            {group.currency_code === 'USD' ? '$' : group.currency_code}
-                            {calculateAmountFromShares(member.user_id).toFixed(2)}
-                          </Text>
-                        )}
+                        {(() => {
+                          const hasAmount = parseFloat(formData.amount) > 0;
+                          const hasShares = calculateTotalShares() > 0;
+                          if (hasAmount && hasShares) {
+                            return (
+                              <Text className="text-sm font-medium text-blue-600">
+                                {group.currency_code === 'USD'
+                                  ? '$'
+                                  : group.currency_code}
+                                {calculateAmountFromShares(
+                                  member.user_id,
+                                ).toFixed(2)}
+                              </Text>
+                            );
+                          }
+                          return null;
+                        })()}
                       </View>
                       <View className="flex-row items-center">
                         <TextInput
                           value={memberShares[member.user_id] || ''}
-                          onChangeText={(text) => handleMemberShareChange(member.user_id, text)}
+                          onChangeText={(text) =>
+                            handleMemberShareChange(member.user_id, text)
+                          }
                           placeholder="0"
                           keyboardType="number-pad"
                           className="flex-1 rounded-lg border border-gray-300 bg-white px-4 py-3 text-base"
                         />
-                        <Text className="ml-2 text-base text-gray-600">shares</Text>
+                        <Text className="ml-2 text-base text-gray-600">
+                          shares
+                        </Text>
                       </View>
                     </View>
                   ))}
 
                   {/* Shares summary */}
-                  {calculateTotalShares() > 0 && parseFloat(formData.amount) > 0 && (
-                    <View className="mt-4 rounded-lg bg-purple-50 p-3">
-                      <View className="flex-row items-center justify-between">
-                        <Text className="text-base font-medium text-purple-900">
-                          Total shares:
-                        </Text>
-                        <Text className="text-lg font-bold text-purple-900">
-                          {calculateTotalShares()}
+                  {calculateTotalShares() > 0 &&
+                    parseFloat(formData.amount) > 0 && (
+                      <View className="mt-4 rounded-lg bg-purple-50 p-3">
+                        <View className="flex-row items-center justify-between">
+                          <Text className="text-base font-medium text-purple-900">
+                            Total shares:
+                          </Text>
+                          <Text className="text-lg font-bold text-purple-900">
+                            {calculateTotalShares()}
+                          </Text>
+                        </View>
+                        <Text className="mt-1 text-sm text-purple-700">
+                          Each share ={' '}
+                          {group.currency_code === 'USD'
+                            ? '$'
+                            : group.currency_code}
+                          {(
+                            parseFloat(formData.amount) / calculateTotalShares()
+                          ).toFixed(2)}
                         </Text>
                       </View>
-                      <Text className="mt-1 text-sm text-purple-700">
-                        Each share = {group.currency_code === 'USD' ? '$' : group.currency_code}
-                        {calculateTotalShares() > 0 ? (parseFloat(formData.amount) / calculateTotalShares()).toFixed(2) : '0.00'}
-                      </Text>
-                    </View>
-                  )}
+                    )}
                 </View>
               )}
 
@@ -828,37 +964,11 @@ export default function AddExpenseScreen() {
 
           <TouchableOpacity
             onPress={isParsingMode ? handleAIParseAndSubmit : handleSubmit}
-            disabled={
-              createExpenseMutation.isPending ||
-              updateExpenseMutation.isPending ||
-              createDraftMutation.isPending ||
-              isParsing
-            }
-            className={`flex-1 rounded-lg py-3 ${
-              createExpenseMutation.isPending ||
-              updateExpenseMutation.isPending ||
-              createDraftMutation.isPending ||
-              isParsing
-                ? 'bg-gray-400'
-                : isParsingMode
-                ? 'bg-purple-600'
-                : 'bg-blue-600'
-            }`}
+            disabled={isAnyMutationPending}
+            className={`flex-1 rounded-lg py-3 ${primaryButtonColorClass}`}
           >
             <Text className="text-center text-base font-semibold text-white">
-              {isParsing
-                ? '🤖 Parsing...'
-                : createDraftMutation.isPending
-                ? 'Creating Draft...'
-                : createExpenseMutation.isPending
-                ? 'Adding...'
-                : updateExpenseMutation.isPending
-                ? 'Updating...'
-                : isParsingMode
-                ? '🤖 Parse & Create Draft'
-                : isEditMode
-                ? 'Update Expense'
-                : 'Add Expense'}
+              {primaryButtonLabel}
             </Text>
           </TouchableOpacity>
         </View>

@@ -1,6 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import type { Expense } from '@shared/types';
-import { Alert, Modal, Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import {
+  Alert,
+  Modal,
+  Pressable,
+  ScrollView,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 
 interface ExpenseDetailModalProps {
   expense: Expense | null;
@@ -26,7 +34,7 @@ export function ExpenseDetailModal({
   const formatAmount = (amount: number, currency: string) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
-      currency: currency,
+      currency,
     }).format(amount);
   };
 
@@ -91,7 +99,7 @@ export function ExpenseDetailModal({
             style: 'destructive',
             onPress: () => onDelete(expense),
           },
-        ]
+        ],
       );
     }
   };
@@ -166,7 +174,11 @@ export function ExpenseDetailModal({
               </View>
 
               <View className="flex-row items-center">
-                <Ionicons name="swap-horizontal-outline" size={20} color="#6b7280" />
+                <Ionicons
+                  name="swap-horizontal-outline"
+                  size={20}
+                  color="#6b7280"
+                />
                 <Text className="ml-3 text-base text-gray-700">
                   <Text className="font-medium">Split Type:</Text>{' '}
                   {getSplitTypeLabel(expense.split_type)}
@@ -192,40 +204,47 @@ export function ExpenseDetailModal({
             </View>
 
             <View className="px-6 py-4">
-              {expense.splits?.map((split, index) => (
-                <View
-                  key={split.id}
-                  className={`flex-row items-center justify-between py-3 ${
-                    index < (expense.splits?.length || 1) - 1
-                      ? 'border-b border-gray-100'
-                      : ''
-                  }`}
-                >
-                  <View className="flex-1">
-                    <Text className="text-base font-medium text-gray-900">
-                      {split.user?.name || split.user?.email || 'Unknown User'}
-                    </Text>
-                    {split.user?.email && split.user?.name && (
-                      <Text className="text-sm text-gray-600">
-                        {split.user.email}
-                      </Text>
-                    )}
-                  </View>
+              {expense.splits?.map((split, index) => {
+                const splitAmount =
+                  split.amount ?? (split.amount_cents ?? 0) / 100;
 
-                  <View className="ml-4 items-end">
-                    <Text className="text-lg font-semibold text-gray-900">
-                      {formatAmount(split.amount, expense.currency_code)}
-                    </Text>
-                    {split.user_id === expense.paid_by && (
-                      <View className="mt-1 rounded-full bg-green-100 px-2 py-1">
-                        <Text className="text-xs font-medium text-green-800">
-                          Paid
+                return (
+                  <View
+                    key={split.id || `${split.user_id}-${index}`}
+                    className={`flex-row items-center justify-between py-3 ${
+                      index < (expense.splits?.length || 1) - 1
+                        ? 'border-b border-gray-100'
+                        : ''
+                    }`}
+                  >
+                    <View className="flex-1">
+                      <Text className="text-base font-medium text-gray-900">
+                        {split.user?.name ||
+                          split.user?.email ||
+                          'Unknown User'}
+                      </Text>
+                      {split.user?.email && split.user?.name && (
+                        <Text className="text-sm text-gray-600">
+                          {split.user.email}
                         </Text>
-                      </View>
-                    )}
+                      )}
+                    </View>
+
+                    <View className="ml-4 items-end">
+                      <Text className="text-lg font-semibold text-gray-900">
+                        {formatAmount(splitAmount, expense.currency_code)}
+                      </Text>
+                      {split.user_id === expense.paid_by && (
+                        <View className="mt-1 rounded-full bg-green-100 px-2 py-1">
+                          <Text className="text-xs font-medium text-green-800">
+                            Paid
+                          </Text>
+                        </View>
+                      )}
+                    </View>
                   </View>
-                </View>
-              ))}
+                );
+              })}
 
               {(!expense.splits || expense.splits.length === 0) && (
                 <View className="py-8">
@@ -238,7 +257,7 @@ export function ExpenseDetailModal({
           </View>
 
           {/* Summary */}
-          <View className="mx-4 my-4 rounded-xl bg-blue-50 p-4">
+          <View className="m-4 rounded-xl bg-blue-50 p-4">
             <View className="flex-row">
               <Ionicons
                 name="information-circle-outline"
@@ -252,14 +271,16 @@ export function ExpenseDetailModal({
                 </Text>
                 <Text className="mt-1 text-sm text-blue-700">
                   {expense.payer?.name || 'Someone'} paid{' '}
-                  {formatAmount(getAmount(), expense.currency_code)} for "{getDescription()}".{' '}
+                  {formatAmount(getAmount(), expense.currency_code)} for &quot;
+                  {getDescription()}&quot;.{' '}
                   {expense.splits && expense.splits.length > 0 && (
                     <>
                       Each person owes{' '}
                       {formatAmount(
                         getAmount() / expense.splits.length,
                         expense.currency_code,
-                      )}.
+                      )}
+                      .
                     </>
                   )}
                 </Text>

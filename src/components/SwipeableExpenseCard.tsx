@@ -1,14 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import type { Expense } from '@shared/types';
-import { useState, useRef } from 'react';
+import { useRef, useState } from 'react';
 import {
+  Alert,
+  Animated,
+  PanResponder,
   Pressable,
   Text,
-  View,
-  Animated,
   TouchableOpacity,
-  Alert,
-  PanResponder,
+  View,
 } from 'react-native';
 
 interface SwipeableExpenseCardProps {
@@ -16,7 +16,6 @@ interface SwipeableExpenseCardProps {
   onPress?: (expense: Expense) => void;
   onEdit?: (expense: Expense) => void;
   onDelete?: (expense: Expense) => void;
-  showGroupName?: boolean;
   canEdit?: boolean;
   canDelete?: boolean;
 }
@@ -26,7 +25,6 @@ export function SwipeableExpenseCard({
   onPress,
   onEdit,
   onDelete,
-  showGroupName,
   canEdit = false,
   canDelete = false,
 }: SwipeableExpenseCardProps) {
@@ -36,7 +34,7 @@ export function SwipeableExpenseCard({
   const formatAmount = (amount: number, currency: string) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
-      currency: currency,
+      currency,
     }).format(amount);
   };
 
@@ -63,13 +61,14 @@ export function SwipeableExpenseCard({
 
     if (diffDays === 0) {
       return 'Today';
-    } else if (diffDays === 1) {
-      return 'Yesterday';
-    } else if (diffDays < 7) {
-      return `${diffDays} days ago`;
-    } else {
-      return date.toLocaleDateString();
     }
+    if (diffDays === 1) {
+      return 'Yesterday';
+    }
+    if (diffDays < 7) {
+      return `${diffDays} days ago`;
+    }
+    return date.toLocaleDateString();
   };
 
   const getSplitInfo = () => {
@@ -89,20 +88,27 @@ export function SwipeableExpenseCard({
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (evt, gestureState) => {
+      onMoveShouldSetPanResponder: (_evt, gestureState) => {
         // Only capture horizontal swipes, not taps or vertical scrolls
-        return Math.abs(gestureState.dx) > Math.abs(gestureState.dy) && Math.abs(gestureState.dx) > 20;
+        return (
+          Math.abs(gestureState.dx) > Math.abs(gestureState.dy) &&
+          Math.abs(gestureState.dx) > 20
+        );
       },
       onPanResponderTerminationRequest: () => false,
       onPanResponderGrant: () => {
-        translateX.setOffset(translateX._value);
+        translateX.stopAnimation((value) => {
+          translateX.setOffset(value);
+          translateX.setValue(0);
+        });
       },
-      onPanResponderMove: (evt, gestureState) => {
-        if (gestureState.dx < 0) { // Only allow left swipe
+      onPanResponderMove: (_evt, gestureState) => {
+        if (gestureState.dx < 0) {
+          // Only allow left swipe
           translateX.setValue(gestureState.dx);
         }
       },
-      onPanResponderRelease: (evt, gestureState) => {
+      onPanResponderRelease: (_evt, gestureState) => {
         translateX.flattenOffset();
 
         // Show actions if swiped left more than 80 pixels
@@ -122,7 +128,7 @@ export function SwipeableExpenseCard({
           }).start();
         }
       },
-    })
+    }),
   ).current;
 
   const hideActions = () => {
@@ -156,7 +162,7 @@ export function SwipeableExpenseCard({
             style: 'destructive',
             onPress: () => onDelete(expense),
           },
-        ]
+        ],
       );
     }
   };
@@ -189,7 +195,7 @@ export function SwipeableExpenseCard({
                 elevation: 3,
               }}
             >
-              <View className="items-center justify-center rounded-full bg-white bg-opacity-20 p-2 mb-1">
+              <View className="mb-1 items-center justify-center rounded-full bg-white/20 p-2">
                 <Ionicons name="create-outline" size={24} color="white" />
               </View>
               <Text className="text-xs font-semibold text-white">Edit</Text>
@@ -212,7 +218,7 @@ export function SwipeableExpenseCard({
                 elevation: 3,
               }}
             >
-              <View className="items-center justify-center rounded-full bg-white bg-opacity-20 p-2 mb-1">
+              <View className="mb-1 items-center justify-center rounded-full bg-white/20 p-2">
                 <Ionicons name="trash-outline" size={24} color="white" />
               </View>
               <Text className="text-xs font-semibold text-white">Delete</Text>
@@ -228,67 +234,67 @@ export function SwipeableExpenseCard({
         }}
         {...panResponder.panHandlers}
       >
-          <Pressable
-            onPress={handleCardPress}
-            className="rounded-lg border border-gray-100 bg-white p-4 shadow-sm"
-            style={({ pressed }) => ({
-              opacity: pressed ? 0.95 : 1,
-              transform: [{ scale: pressed ? 0.98 : 1 }],
-            })}
-          >
-            <View className="flex-row items-start justify-between">
-              <View className="flex-1">
-                <Text className="mb-1 text-base font-semibold text-gray-900">
-                  {getDescription()}
-                </Text>
+        <Pressable
+          onPress={handleCardPress}
+          className="rounded-lg border border-gray-100 bg-white p-4 shadow-sm"
+          style={({ pressed }) => ({
+            opacity: pressed ? 0.95 : 1,
+            transform: [{ scale: pressed ? 0.98 : 1 }],
+          })}
+        >
+          <View className="flex-row items-start justify-between">
+            <View className="flex-1">
+              <Text className="mb-1 text-base font-semibold text-gray-900">
+                {getDescription()}
+              </Text>
 
-                <View className="mb-2 flex-row items-center">
-                  <Ionicons name="person-outline" size={14} color="#6b7280" />
-                  <Text className="ml-1 text-sm text-gray-600">
-                    Paid by {expense.payer?.name || 'Unknown'}
-                  </Text>
-                </View>
-
-                <View className="flex-row items-center">
-                  <Ionicons name="people-outline" size={14} color="#6b7280" />
-                  <Text className="ml-1 text-sm text-gray-600">
-                    {getSplitInfo()}
-                  </Text>
-                </View>
-
-                <Text className="mt-2 text-xs text-gray-500">
-                  {formatDate(expense.created_at)}
+              <View className="mb-2 flex-row items-center">
+                <Ionicons name="person-outline" size={14} color="#6b7280" />
+                <Text className="ml-1 text-sm text-gray-600">
+                  Paid by {expense.payer?.name || 'Unknown'}
                 </Text>
               </View>
 
-              <View className="ml-4 items-end">
-                <Text className="text-lg font-bold text-gray-900">
-                  {formatAmount(getAmount(), expense.currency_code)}
+              <View className="flex-row items-center">
+                <Ionicons name="people-outline" size={14} color="#6b7280" />
+                <Text className="ml-1 text-sm text-gray-600">
+                  {getSplitInfo()}
                 </Text>
-
-                <View className="mt-1 rounded-full bg-gray-100 px-2 py-1">
-                  <Text className="text-xs font-medium text-gray-600">
-                    {expense.split_type}
-                  </Text>
-                </View>
               </View>
+
+              <Text className="mt-2 text-xs text-gray-500">
+                {formatDate(expense.created_at)}
+              </Text>
             </View>
 
-            {onPress && !isRevealed && (
-              <View className="mt-3 flex-row items-center justify-center">
-                <Ionicons name="chevron-forward" size={16} color="#6b7280" />
-              </View>
-            )}
+            <View className="ml-4 items-end">
+              <Text className="text-lg font-bold text-gray-900">
+                {formatAmount(getAmount(), expense.currency_code)}
+              </Text>
 
-            {(canEdit || canDelete) && !isRevealed && (
-              <View className="mt-2 flex-row items-center justify-center">
-                <Text className="text-xs text-gray-400">
-                  ← Swipe left for actions
+              <View className="mt-1 rounded-full bg-gray-100 px-2 py-1">
+                <Text className="text-xs font-medium text-gray-600">
+                  {expense.split_type}
                 </Text>
               </View>
-            )}
-          </Pressable>
-        </Animated.View>
+            </View>
+          </View>
+
+          {onPress && !isRevealed && (
+            <View className="mt-3 flex-row items-center justify-center">
+              <Ionicons name="chevron-forward" size={16} color="#6b7280" />
+            </View>
+          )}
+
+          {(canEdit || canDelete) && !isRevealed && (
+            <View className="mt-2 flex-row items-center justify-center">
+              <Text className="text-xs text-gray-400">
+                ← Swipe left for actions
+              </Text>
+            </View>
+          )}
+        </Pressable>
+      </Animated.View>
     </View>
   );
 }

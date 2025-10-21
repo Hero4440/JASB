@@ -15,11 +15,38 @@ import type {
 } from '@shared/types';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { LogCategory, logger } from './logger';
 import { getAuthToken } from './supabase';
-import { logger, LogCategory } from './logger';
 
 // API configuration
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3001';
+
+const createRequestHeaders = async (): Promise<HeadersInit> => {
+  const headers: HeadersInit = {
+    'Content-Type': 'application/json',
+  };
+
+  // Add authentication token if available
+  const token = await getAuthToken();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  // For development/testing, allow test user headers
+  if (__DEV__) {
+    const testUserId = process.env.EXPO_PUBLIC_TEST_USER_ID;
+    const testUserEmail = process.env.EXPO_PUBLIC_TEST_USER_EMAIL;
+
+    if (testUserId) {
+      headers['X-Test-User-ID'] = testUserId;
+    }
+    if (testUserEmail) {
+      headers['X-Test-User-Email'] = testUserEmail;
+    }
+  }
+
+  return headers;
+};
 
 // HTTP client with authentication
 class ApiClient {
@@ -29,39 +56,12 @@ class ApiClient {
     this.baseUrl = baseUrl;
   }
 
-  private async getHeaders(): Promise<HeadersInit> {
-    const headers: HeadersInit = {
-      'Content-Type': 'application/json',
-    };
-
-    // Add authentication token if available
-    const token = await getAuthToken();
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
-    }
-
-    // For development/testing, allow test user headers
-    if (__DEV__) {
-      const testUserId = process.env.EXPO_PUBLIC_TEST_USER_ID;
-      const testUserEmail = process.env.EXPO_PUBLIC_TEST_USER_EMAIL;
-
-      if (testUserId) {
-        headers['X-Test-User-ID'] = testUserId;
-      }
-      if (testUserEmail) {
-        headers['X-Test-User-Email'] = testUserEmail;
-      }
-    }
-
-    return headers;
-  }
-
   private async request<T>(
     endpoint: string,
     options: RequestInit = {},
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
-    const headers = await this.getHeaders();
+    const headers = await createRequestHeaders();
     const method = options.method || 'GET';
     const startTime = Date.now();
 
@@ -70,9 +70,9 @@ class ApiClient {
       url,
       method,
       headers: Object.fromEntries(
-        Object.entries(headers).filter(([key]) =>
-          !key.toLowerCase().includes('authorization') // Don't log auth tokens
-        )
+        Object.entries(headers).filter(
+          ([key]) => !key.toLowerCase().includes('authorization'), // Don't log auth tokens
+        ),
       ),
       body: options.body ? JSON.parse(options.body as string) : undefined,
     });
@@ -91,7 +91,8 @@ class ApiClient {
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         const error = new Error(
-          errorData.message || `HTTP ${response.status}: ${response.statusText}`,
+          errorData.message ||
+            `HTTP ${response.status}: ${response.statusText}`,
         );
         (error as any).status = response.status;
         (error as any).code = errorData.code;
@@ -140,7 +141,10 @@ class ApiClient {
       });
 
       // Log additional context for network failures
-      if (error instanceof TypeError && error.message === 'Network request failed') {
+      if (
+        error instanceof TypeError &&
+        error.message === 'Network request failed'
+      ) {
         logger.error(
           LogCategory.NETWORK,
           `Network connection failed to ${url}. Backend server may not be running.`,
@@ -150,7 +154,7 @@ class ApiClient {
             endpoint,
             method,
             suggestion: 'Check if backend server is running on localhost:3001',
-          }
+          },
         );
       }
 
@@ -204,8 +208,10 @@ export const queryKeys = {
   group: (id: string) => ['groups', id] as const,
   groupExpenses: (groupId: string) => ['groups', groupId, 'expenses'] as const,
   groupBalances: (groupId: string) => ['groups', groupId, 'balances'] as const,
-  groupSettlements: (groupId: string) => ['groups', groupId, 'settlements'] as const,
-  groupSettlementRecords: (groupId: string) => ['groups', groupId, 'settlement-records'] as const,
+  groupSettlements: (groupId: string) =>
+    ['groups', groupId, 'settlements'] as const,
+  groupSettlementRecords: (groupId: string) =>
+    ['groups', groupId, 'settlement-records'] as const,
   groupDrafts: (groupId: string) => ['groups', groupId, 'drafts'] as const,
   expense: (id: string) => ['expenses', id] as const,
   draft: (id: string) => ['drafts', id] as const,
@@ -409,7 +415,6 @@ export const useUpdateExpense = () => {
   return useMutation({
     mutationFn: ({
       expenseId,
-      groupId,
       expense,
     }: {
       expenseId: string;
@@ -458,13 +463,8 @@ export const useDeleteExpense = () => {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({
-      expenseId,
-      groupId,
-    }: {
-      expenseId: string;
-      groupId: string;
-    }) => apiClient.delete(`/v1/expenses/${expenseId}`),
+    mutationFn: ({ expenseId }: { expenseId: string; groupId: string }) =>
+      apiClient.delete(`/v1/expenses/${expenseId}`),
     onSuccess: (_, { groupId, expenseId }) => {
       // Remove the expense from cache
       queryClient.removeQueries({ queryKey: queryKeys.expense(expenseId) });
@@ -519,7 +519,8 @@ export const useGroupBalances = (groupId: string) => {
 export const useGroupSettlements = (groupId: string) => {
   return useQuery({
     queryKey: queryKeys.groupSettlements(groupId),
-    queryFn: () => apiClient.get<Settlement[]>(`/v1/groups/${groupId}/settlements`),
+    queryFn: () =>
+      apiClient.get<Settlement[]>(`/v1/groups/${groupId}/settlements`),
     enabled: !!groupId,
   });
 };
@@ -685,7 +686,10 @@ export const getErrorMessage = (error: unknown): string => {
 export const useGroupSettlementRecords = (groupId: string) => {
   return useQuery({
     queryKey: queryKeys.groupSettlementRecords(groupId),
-    queryFn: () => apiClient.get<SettlementRecord[]>(`/v1/groups/${groupId}/settlement-records`),
+    queryFn: () =>
+      apiClient.get<SettlementRecord[]>(
+        `/v1/groups/${groupId}/settlement-records`,
+      ),
     enabled: !!groupId,
   });
 };
@@ -700,7 +704,11 @@ export const useCreateSettlementRecord = () => {
     }: {
       groupId: string;
       settlement: CreateSettlementRequest;
-    }) => apiClient.post<SettlementRecord>(`/v1/groups/${groupId}/settlement-records`, settlement),
+    }) =>
+      apiClient.post<SettlementRecord>(
+        `/v1/groups/${groupId}/settlement-records`,
+        settlement,
+      ),
     onSuccess: (_, { groupId }) => {
       // Invalidate and refetch related queries immediately
       queryClient.invalidateQueries({

@@ -19,6 +19,18 @@ export interface UserBalance {
 }
 
 /**
+ * Generate a human-readable description for a settlement
+ */
+function generateSettlementDescription(
+  debtorName: string,
+  creditorName: string,
+  amountCents: number,
+): string {
+  const amount = (amountCents / 100).toFixed(2);
+  return `${debtorName} pays ${creditorName} $${amount}`;
+}
+
+/**
  * Calculate optimal settlement suggestions to minimize number of transactions
  * Uses a greedy approach similar to the "debt settlement" problem
  */
@@ -54,6 +66,10 @@ export function calculateSettlements(
     const creditor = creditors[i];
     const debtor = debtors[j];
 
+    if (!creditor || !debtor) {
+      break;
+    }
+
     // Calculate settlement amount (minimum of what creditor is owed and what debtor owes)
     const settlementAmount = Math.min(
       creditor.balance_cents,
@@ -79,26 +95,14 @@ export function calculateSettlements(
 
     // Move to next creditor/debtor if current one is settled
     if (creditor.balance_cents === 0) {
-      i++;
+      i += 1;
     }
     if (debtor.balance_cents === 0) {
-      j++;
+      j += 1;
     }
   }
 
   return settlements;
-}
-
-/**
- * Generate a human-readable description for a settlement
- */
-function generateSettlementDescription(
-  debtorName: string,
-  creditorName: string,
-  amountCents: number,
-): string {
-  const amount = (amountCents / 100).toFixed(2);
-  return `${debtorName} pays ${creditorName} $${amount}`;
 }
 
 /**
@@ -121,17 +125,19 @@ export function calculateGroupBalances(
   // Process each expense
   for (const expense of expenses) {
     // Add the full amount to the person who paid
-    if (!balanceMap[expense.paid_by]) {
-      balanceMap[expense.paid_by] = 0;
+    const paidBy = expense.paid_by;
+    if (balanceMap[paidBy] === undefined) {
+      balanceMap[paidBy] = 0;
     }
-    balanceMap[expense.paid_by] += expense.amount_cents;
+    balanceMap[paidBy]! += expense.amount_cents;
 
     // Subtract each person's share
     for (const split of expense.splits) {
-      if (!balanceMap[split.user_id]) {
-        balanceMap[split.user_id] = 0;
+      const userId = split.user_id;
+      if (balanceMap[userId] === undefined) {
+        balanceMap[userId] = 0;
       }
-      balanceMap[split.user_id] -= split.amount_cents;
+      balanceMap[userId]! -= split.amount_cents;
     }
   }
 
@@ -172,16 +178,18 @@ export function validateSettlements(settlements: SettlementSuggestion[]): {
 
   for (const settlement of settlements) {
     // Person paying loses money (negative)
-    if (!userTotals[settlement.from_user]) {
-      userTotals[settlement.from_user] = 0;
+    const fromUser = settlement.from_user;
+    if (userTotals[fromUser] === undefined) {
+      userTotals[fromUser] = 0;
     }
-    userTotals[settlement.from_user] -= settlement.amount_cents;
+    userTotals[fromUser]! -= settlement.amount_cents;
 
     // Person receiving gains money (positive)
-    if (!userTotals[settlement.to_user]) {
-      userTotals[settlement.to_user] = 0;
+    const toUser = settlement.to_user;
+    if (userTotals[toUser] === undefined) {
+      userTotals[toUser] = 0;
     }
-    userTotals[settlement.to_user] += settlement.amount_cents;
+    userTotals[toUser]! += settlement.amount_cents;
   }
 
   // Check that all totals are approximately zero (allowing for small rounding errors)
